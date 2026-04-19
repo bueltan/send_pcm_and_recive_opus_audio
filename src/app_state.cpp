@@ -50,3 +50,6 @@ String wifiNetworkNames[MAX_WIFI_NETWORKS];
 int wifiNetworkRSSI[MAX_WIFI_NETWORKS];
 bool wifiScanInProgress = false;
 int selectedWifiIndex = -1;
+
+String lastErrorLine1 = "Error";
+String lastErrorLine2 = "Unknown error";

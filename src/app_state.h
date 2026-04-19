@@ -84,4 +84,6 @@ extern int wifiNetworkRSSI[MAX_WIFI_NETWORKS];
 extern bool wifiScanInProgress;
 extern int selectedWifiIndex;
 
-// ====================== FUNCTION PROTOTYPES ======================
+
+extern String lastErrorLine1;
+extern String lastErrorLine2;

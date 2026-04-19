@@ -1,11 +1,26 @@
 #include "network_udp.h"
 
+#include <Arduino.h>
 #include <WiFiUdp.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
+#include <cstring>
+
 #include "app_state.h"
 
 static WiFiUDP udp;
+
+static bool isExactControlMessage(const uint8_t *data, int len, const char *text)
+{
+    if (data == nullptr || text == nullptr || len <= 0)
+        return false;
+
+    const size_t expectedLen = strlen(text);
+    if (len != (int)expectedLen)
+        return false;
+
+    return memcmp(data, text, expectedLen) == 0;
+}
 
 bool networkUdpInit(uint16_t localPort)
 {
@@ -22,7 +37,7 @@ bool networkUdpSendRaw(const char *serverIp, uint16_t serverPort, const uint8_t 
 
     udp.beginPacket(serverIp, serverPort);
     udp.write(data, len);
-    int ok = udp.endPacket();
+    const int ok = udp.endPacket();
 
     xSemaphoreGive(udpMutex);
     return ok == 1;
@@ -36,7 +51,7 @@ int networkUdpParsePacket()
     if (xSemaphoreTake(udpMutex, pdMS_TO_TICKS(20)) != pdTRUE)
         return 0;
 
-    int packetSize = udp.parsePacket();
+    const int packetSize = udp.parsePacket();
 
     xSemaphoreGive(udpMutex);
     return packetSize;
@@ -44,14 +59,26 @@ int networkUdpParsePacket()
 
 int networkUdpRead(uint8_t *buffer, size_t bufferSize)
 {
-    if (udpMutex == nullptr)
+    if (udpMutex == nullptr || buffer == nullptr || bufferSize == 0)
         return 0;
 
     if (xSemaphoreTake(udpMutex, pdMS_TO_TICKS(20)) != pdTRUE)
         return 0;
 
-    int n = udp.read(buffer, bufferSize);
+    const int n = udp.read(buffer, bufferSize);
 
     xSemaphoreGive(udpMutex);
+
+    if (n <= 0)
+        return 0;
+
+    // Heartbeat response from backend
+    if (isExactControlMessage(buffer, n, "PONG"))
+    {
+        lastPongTime = millis();
+        udpStatus = UDP_CONNECTED;
+        return 0; // swallow control packet
+    }
+
     return n;
 }

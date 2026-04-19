@@ -4,6 +4,7 @@
 
 #include "display_hal.h"
 #include "app_runtime_state.h"
+#include "app_state.h"
 
 static TFT_eSPI_Button btnMic;
 static volatile UiState uiState = UI_READY;
@@ -67,9 +68,22 @@ static void drawWifiStatus()
 {
     TFT_eSPI &tft = display();
 
-    const uint16_t dotColor = wifiReady ? TFT_GREEN : TFT_WHITE;
+    uint16_t dotColor = TFT_WHITE;
 
-    // WiFi indicator placed below the setup button
+    if (wifiStatus == DISCONNECTED)
+    {
+        dotColor = TFT_WHITE;
+    }
+    else if (udpStatus == UDP_CONNECTED)
+    {
+        dotColor = TFT_GREEN;
+    }
+    else
+    {
+        dotColor = TFT_ORANGE;
+    }
+
+    // Indicator below setup button
     static constexpr int WIFI_BOX_X = 184;
     static constexpr int WIFI_BOX_Y = 54;
     static constexpr int WIFI_BOX_W = 48;
@@ -84,7 +98,6 @@ static void drawWifiStatus()
 
     screenLock();
 
-    // Clear only the WiFi indicator area
     tft.fillRect(WIFI_BOX_X, WIFI_BOX_Y, WIFI_BOX_W, WIFI_BOX_H, TFT_BLACK);
 
     tft.setTextColor(TFT_GREEN, TFT_BLACK);
@@ -97,6 +110,7 @@ static void drawWifiStatus()
 
     screenUnlock();
 }
+
 static void drawStatusText(const char *line1, const char *line2 = nullptr)
 {
     TFT_eSPI &tft = display();
@@ -172,8 +186,8 @@ void uiStartDrawBase()
     screenUnlock();
 
     drawTitle();
-    drawWifiStatus();
     drawSetupButton(false);
+    drawWifiStatus();
 
     drawStatusText("Ready", "Tap MIC to talk");
     drawMicButton(false);
@@ -184,6 +198,12 @@ void uiStartApplyState(UiState state)
     if (state == uiState)
     {
         drawWifiStatus();
+
+        if (state == UI_ERROR)
+        {
+            drawStatusText(lastErrorLine1.c_str(), lastErrorLine2.c_str());
+        }
+
         return;
     }
 
@@ -194,18 +214,22 @@ void uiStartApplyState(UiState state)
     case UI_READY:
         drawStatusText("Ready", "Tap MIC to talk");
         break;
+
     case UI_LISTENING:
         drawStatusText("Listening", "Tap MIC again to send");
         break;
+
     case UI_THINKING:
         drawStatusText("Thinking", "Waiting response...");
         break;
+
     case UI_SPEAKING:
         drawStatusText("Speaking", "Receiving audio...");
         break;
+
     case UI_ERROR:
     default:
-        drawStatusText("Error", "Check serial log");
+        drawStatusText(lastErrorLine1.c_str(), lastErrorLine2.c_str());
         break;
     }
 
