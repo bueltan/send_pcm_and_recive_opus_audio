@@ -18,29 +18,53 @@
 #include "ui_wifi_password.h"
 
 // ============================================================
-// Helpers
+// Timing
 // ============================================================
 static unsigned long lastConnectivityRefreshMs = 0;
 static bool lastWifiConnectedState = false;
+static unsigned long lastWifiConnectedAtMs = 0;
 
 static constexpr unsigned long SERVER_PING_INTERVAL_MS = 3000;
 static constexpr unsigned long SERVER_PONG_TIMEOUT_MS = 6000;
+static constexpr unsigned long CONNECTIVITY_REFRESH_MS = 1000;
 
+// ============================================================
+// UI error helper
+// ============================================================
 static void setUiError(const char *line1, const char *line2)
 {
     lastErrorLine1 = line1 ? line1 : "Error";
     lastErrorLine2 = line2 ? line2 : "";
 }
+
+// ============================================================
+// UDP / heartbeat
+// ============================================================
+static bool sendRawUdpPacket(const uint8_t *data, size_t len)
+{
+    return networkUdpSendRaw(serverIP.c_str(), SERVER_PORT, data, len);
+}
+
 static bool sendServerPing()
 {
     static const char *pingMsg = "PING";
-    return networkUdpSendRaw(serverIP.c_str(), SERVER_PORT,
-                             reinterpret_cast<const uint8_t *>(pingMsg),
-                             4);
+    return networkUdpSendRaw(
+        serverIP.c_str(),
+        SERVER_PORT,
+        reinterpret_cast<const uint8_t *>(pingMsg),
+        4);
 }
+
+static void resetServerHeartbeatState()
+{
+    lastPingTime = 0;
+    lastPongTime = 0;
+    udpStatus = DISCONNECTED;
+}
+
 static void updateServerHeartbeat()
 {
-    if (!wifiReady || !networkServicesStarted)
+    if (!wifiReady || !networkServicesStarted || !networkWifiIsConnected())
     {
         udpStatus = DISCONNECTED;
         return;
@@ -48,7 +72,7 @@ static void updateServerHeartbeat()
 
     const unsigned long now = millis();
 
-    if (now - lastPingTime >= SERVER_PING_INTERVAL_MS)
+    if (lastPingTime == 0 || (now - lastPingTime) >= SERVER_PING_INTERVAL_MS)
     {
         if (sendServerPing())
         {
@@ -56,7 +80,15 @@ static void updateServerHeartbeat()
         }
     }
 
-    if ((now - lastPongTime) <= SERVER_PONG_TIMEOUT_MS)
+    const bool pongIsRecent =
+        (lastPongTime != 0) &&
+        ((now - lastPongTime) <= SERVER_PONG_TIMEOUT_MS);
+
+    const bool pongBelongsToCurrentWifiSession =
+        (lastPongTime != 0) &&
+        (lastPongTime >= lastWifiConnectedAtMs);
+
+    if (pongIsRecent && pongBelongsToCurrentWifiSession)
     {
         udpStatus = UDP_CONNECTED;
     }
@@ -65,6 +97,10 @@ static void updateServerHeartbeat()
         udpStatus = DISCONNECTED;
     }
 }
+
+// ============================================================
+// Start screen state model
+// ============================================================
 static void refreshStartScreenStatus()
 {
     if (currentScreen != SCREEN_START)
@@ -106,11 +142,10 @@ static void refreshStartScreenStatus()
 
     uiStartApplyState(UI_READY);
 }
-static bool sendRawUdpPacket(const uint8_t *data, size_t len)
-{
-    return networkUdpSendRaw(serverIP.c_str(), SERVER_PORT, data, len);
-}
 
+// ============================================================
+// Connectivity state
+// ============================================================
 static bool startNetworkServicesIfNeeded()
 {
     if (!wifiReady)
@@ -150,30 +185,38 @@ static bool startNetworkServicesIfNeeded()
     audioDownlinkStartTasks();
 
     networkServicesStarted = true;
+    resetServerHeartbeatState();
+
     Serial.println("[NET] UDP/audio services started");
     return true;
 }
+
 static void refreshConnectivityState()
 {
     const bool wifiConnectedNow = networkWifiIsConnected();
 
-    // Detect transition: disconnected -> connected
     if (wifiConnectedNow && !lastWifiConnectedState)
     {
-        Serial.println("[WIFI] Connection detected after startup");
+        Serial.println("[WIFI] Connection detected");
 
         wifiReady = true;
         wifiStatus = WIFI_CONNECTED;
+
+        // Start a new WiFi session epoch
+        lastWifiConnectedAtMs = millis();
+
+        // Any previous server heartbeat is now stale
+        resetServerHeartbeatState();
 
         if (!networkServicesStarted)
         {
             if (startNetworkServicesIfNeeded())
             {
-                Serial.println("[NET] Services started after WiFi reconnect");
+                Serial.println("[NET] Services started after WiFi connect");
             }
             else
             {
-                Serial.println("[NET] Failed to start services after WiFi reconnect");
+                Serial.println("[NET] Failed to start services after WiFi connect");
             }
         }
     }
@@ -183,7 +226,7 @@ static void refreshConnectivityState()
 
         wifiReady = false;
         wifiStatus = DISCONNECTED;
-        udpStatus = DISCONNECTED;
+        resetServerHeartbeatState();
     }
     else if (wifiConnectedNow)
     {
@@ -194,7 +237,7 @@ static void refreshConnectivityState()
     {
         wifiReady = false;
         wifiStatus = DISCONNECTED;
-        udpStatus = DISCONNECTED;
+        resetServerHeartbeatState();
     }
 
     lastWifiConnectedState = wifiConnectedNow;
@@ -205,82 +248,9 @@ static void refreshConnectivityState()
         refreshStartScreenStatus();
     }
 }
-
-static void haltWithUiError()
-{
-    if (currentScreen == SCREEN_START)
-    {
-        uiStartApplyState(UI_ERROR);
-    }
-
-    while (true)
-    {
-        delay(1000);
-    }
-}
-
-static void handleMicToggle()
-{
-    if (!wifiReady)
-    {
-        setUiError("No WiFi", "Open SETUP to connect");
-
-        if (currentScreen == SCREEN_START)
-        {
-            uiStartApplyState(UI_ERROR);
-        }
-        return;
-    }
-
-    if (udpStatus != UDP_CONNECTED)
-    {
-        setUiError("No server", "Waiting backend...");
-
-        if (currentScreen == SCREEN_START)
-        {
-            uiStartApplyState(UI_ERROR);
-        }
-        return;
-    }
-
-    if (!networkServicesStarted)
-    {
-        setUiError("Audio offline", "Network not ready");
-
-        if (currentScreen == SCREEN_START)
-        {
-            uiStartApplyState(UI_ERROR);
-        }
-        return;
-    }
-
-    if (!micEnabled && !awaitingResponse)
-    {
-        audioDownlinkResetStreamState();
-        micEnabled = true;
-        awaitingResponse = false;
-        isPlayingResponse = false;
-
-        if (currentScreen == SCREEN_START)
-        {
-            uiStartApplyState(UI_LISTENING);
-        }
-        return;
-    }
-
-    if (micEnabled)
-    {
-        micEnabled = false;
-        awaitingResponse = true;
-        isPlayingResponse = false;
-
-        if (currentScreen == SCREEN_START)
-        {
-            uiStartApplyState(UI_THINKING);
-        }
-    }
-}
-
+// ============================================================
+// UI navigation
+// ============================================================
 static void showStartScreen()
 {
     currentScreen = SCREEN_START;
@@ -307,6 +277,9 @@ static void showWifiPasswordScreen()
     uiWifiPasswordDrawBase();
 }
 
+// ============================================================
+// WiFi scan
+// ============================================================
 static void clearWifiScanResults()
 {
     wifiNetworkCount = 0;
@@ -361,6 +334,85 @@ static void runWifiScanBlocking()
 }
 
 // ============================================================
+// Runtime actions
+// ============================================================
+static void handleMicToggle()
+{
+    if (!wifiReady)
+    {
+        setUiError("No WiFi", "Open SETUP to connect");
+        if (currentScreen == SCREEN_START)
+        {
+            uiStartApplyState(UI_ERROR);
+        }
+        return;
+    }
+
+    if (!networkServicesStarted)
+    {
+        setUiError("Audio offline", "Starting services...");
+        if (currentScreen == SCREEN_START)
+        {
+            uiStartApplyState(UI_ERROR);
+        }
+        return;
+    }
+
+    if (udpStatus != UDP_CONNECTED)
+    {
+        setUiError("No server", "Waiting backend...");
+        if (currentScreen == SCREEN_START)
+        {
+            uiStartApplyState(UI_ERROR);
+        }
+        return;
+    }
+
+    if (!micEnabled && !awaitingResponse)
+    {
+        audioDownlinkResetStreamState();
+        micEnabled = true;
+        awaitingResponse = false;
+        isPlayingResponse = false;
+
+        if (currentScreen == SCREEN_START)
+        {
+            uiStartApplyState(UI_LISTENING);
+        }
+        return;
+    }
+
+    if (micEnabled)
+    {
+        micEnabled = false;
+        awaitingResponse = true;
+        isPlayingResponse = false;
+
+        if (currentScreen == SCREEN_START)
+        {
+            uiStartApplyState(UI_THINKING);
+        }
+    }
+}
+
+// ============================================================
+// Fatal UI error
+// ============================================================
+static void haltWithUiError()
+{
+    if (currentScreen == SCREEN_START)
+    {
+        setUiError("Fatal error", "Check serial log");
+        uiStartApplyState(UI_ERROR);
+    }
+
+    while (true)
+    {
+        delay(1000);
+    }
+}
+
+// ============================================================
 // SETUP
 // ============================================================
 void setup()
@@ -394,10 +446,8 @@ void setup()
         serverIP = SERVER_IP;
     }
 
-    // Start with a neutral screen first
     showStartScreen();
 
-    // Try WiFi using saved credentials
     if (!networkWifiConnectConfigured())
     {
         Serial.println("[WIFI] Starting without WiFi connection");
@@ -410,10 +460,18 @@ void setup()
         }
     }
 
-    // Refresh connectivity indicator/state after WiFi init attempt
-    refreshConnectivityState();
+    lastWifiConnectedState = networkWifiIsConnected();
 
-    // Redraw start screen with the real current state
+    if (lastWifiConnectedState)
+    {
+        lastWifiConnectedAtMs = millis();
+    }
+    else
+    {
+        lastWifiConnectedAtMs = 0;
+    }
+
+    refreshConnectivityState();
     showStartScreen();
 
     startTouchTask();
@@ -494,10 +552,12 @@ void loop()
                 Serial.println("[NET] Failed to start services after WiFi connect");
             }
 
+            resetServerHeartbeatState();
             Serial.println("[WIFI] Connected and saved");
         }
         else
         {
+            setUiError("WiFi failed", "Check password");
             Serial.println("[WIFI] Failed to connect");
         }
 
@@ -517,7 +577,7 @@ void loop()
 
     updateServerHeartbeat();
 
-    if (millis() - lastConnectivityRefreshMs >= 1000)
+    if (millis() - lastConnectivityRefreshMs >= CONNECTIVITY_REFRESH_MS)
     {
         lastConnectivityRefreshMs = millis();
         refreshConnectivityState();

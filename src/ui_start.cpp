@@ -9,13 +9,11 @@
 static TFT_eSPI_Button btnMic;
 static volatile UiState uiState = UI_READY;
 
-// Setup button bounds
 static constexpr int SETUP_X = 188;
 static constexpr int SETUP_Y = 14;
 static constexpr int SETUP_W = 36;
 static constexpr int SETUP_H = 36;
 
-// Simple 16x16 monochrome setup icon
 static const uint8_t setupIcon16x16[] = {
     0b00000111, 0b11100000,
     0b00001100, 0b00110000,
@@ -83,7 +81,6 @@ static void drawWifiStatus()
         dotColor = TFT_ORANGE;
     }
 
-    // Indicator below setup button
     static constexpr int WIFI_BOX_X = 184;
     static constexpr int WIFI_BOX_Y = 54;
     static constexpr int WIFI_BOX_W = 48;
@@ -130,6 +127,7 @@ static void drawStatusText(const char *line1, const char *line2 = nullptr)
         tft.setCursor(18, 126);
         tft.print(line2);
     }
+
     screenUnlock();
 }
 
@@ -188,7 +186,6 @@ void uiStartDrawBase()
     drawTitle();
     drawSetupButton(false);
     drawWifiStatus();
-
     drawStatusText("Ready", "Tap MIC to talk");
     drawMicButton(false);
 }
