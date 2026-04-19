@@ -2,15 +2,7 @@
 
 #include <Arduino.h>
 
-// ============================================================
-// WiFi / Server
-// ============================================================
 
-// WiFi network name used by the ESP32 to connect to the local router.
-constexpr const char *WIFI_SSID = "MOVISTAR-WIFI6-B700";
-
-// WiFi password for the network above.
-constexpr const char *WIFI_PASS = "uDRsVe6jpvSfSCiQ9wPL";
 
 // IP address of the backend server that receives uplink audio
 // and sends downlink audio back to the ESP32.

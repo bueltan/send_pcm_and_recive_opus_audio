@@ -16,7 +16,8 @@ enum AppScreen
 {
     SCREEN_START,
     SCREEN_SETUP,
-    SCREEN_WIFI
+    SCREEN_WIFI,
+    SCREEN_WIFI_PASSWORD,
 };
 
 extern volatile AppScreen currentScreen;
@@ -82,3 +83,5 @@ extern String wifiNetworkNames[MAX_WIFI_NETWORKS];
 extern int wifiNetworkRSSI[MAX_WIFI_NETWORKS];
 extern bool wifiScanInProgress;
 extern int selectedWifiIndex;
+
+// ====================== FUNCTION PROTOTYPES ======================

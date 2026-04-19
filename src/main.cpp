@@ -8,18 +8,21 @@
 #include "audio_mic.h"
 #include "audio_downlink.h"
 #include "network_udp.h"
+#include "network_wifi.h"
+#include "storage_prefs.h"
 #include "app_config.h"
 
 #include "ui_start.h"
 #include "ui_setup.h"
 #include "ui_wifi.h"
+#include "ui_wifi_password.h"
 
 // ============================================================
 // Helpers
 // ============================================================
 static bool sendRawUdpPacket(const uint8_t *data, size_t len)
 {
-    return networkUdpSendRaw(SERVER_IP, SERVER_PORT, data, len);
+    return networkUdpSendRaw(serverIP.c_str(), SERVER_PORT, data, len);
 }
 
 static void haltWithUiError()
@@ -35,9 +38,52 @@ static void haltWithUiError()
     }
 }
 
-static void handleMicToggle()
+static bool startNetworkServicesIfNeeded()
 {
     if (!wifiReady)
+    {
+        Serial.println("[NET] WiFi not ready, skipping UDP/audio startup");
+        return false;
+    }
+
+    if (networkServicesStarted)
+    {
+        return true;
+    }
+
+    Serial.println("[NET] Starting UDP/audio services...");
+
+    if (!networkUdpInit(LOCAL_UDP_PORT))
+    {
+        Serial.println("[NET] networkUdpInit failed");
+        return false;
+    }
+
+    audioMicSetRawUdpSender(sendRawUdpPacket);
+
+    if (!audioDownlinkInit())
+    {
+        Serial.println("[NET] audioDownlinkInit failed");
+        return false;
+    }
+
+    if (!audioMicInit())
+    {
+        Serial.println("[NET] audioMicInit failed");
+        return false;
+    }
+
+    audioMicStartTask();
+    audioDownlinkStartTasks();
+
+    networkServicesStarted = true;
+    Serial.println("[NET] UDP/audio services started");
+    return true;
+}
+
+static void handleMicToggle()
+{
+    if (!wifiReady || !networkServicesStarted)
     {
         if (currentScreen == SCREEN_START)
         {
@@ -114,6 +160,13 @@ static void showWifiScreen()
     uiWifiDrawBase();
 }
 
+static void showWifiPasswordScreen()
+{
+    currentScreen = SCREEN_WIFI_PASSWORD;
+    uiWifiPasswordInit();
+    uiWifiPasswordDrawBase();
+}
+
 static void clearWifiScanResults()
 {
     wifiNetworkCount = 0;
@@ -140,7 +193,7 @@ static void runWifiScanBlocking()
     WiFi.disconnect(false, false);
     delay(100);
 
-    int found = WiFi.scanNetworks(false, true);
+    const int found = WiFi.scanNetworks(false, true);
 
     if (found > 0)
     {
@@ -192,48 +245,33 @@ void setup()
     uiStartInit();
     uiSetupInit();
     uiWifiInit();
+    uiWifiPasswordInit();
+
+    storagePrefsLoad();
+
+    if (serverIP.length() == 0)
+    {
+        serverIP = SERVER_IP;
+    }
 
     showStartScreen();
     uiStartApplyState(UI_THINKING);
 
-    WiFi.mode(WIFI_STA);
-    WiFi.begin(WIFI_SSID, WIFI_PASS);
-
-    while (WiFi.status() != WL_CONNECTED)
+    if (!networkWifiConnectConfigured())
     {
-        delay(300);
-        Serial.print(".");
+        Serial.println("[WIFI] Starting without WiFi connection");
     }
-
-    WiFi.setSleep(false);
-    wifiReady = true;
-
-    Serial.println();
-    Serial.print("[WIFI] IP: ");
-    Serial.println(WiFi.localIP());
-
-    if (!networkUdpInit(LOCAL_UDP_PORT))
+    else
     {
-        haltWithUiError();
-    }
-
-    audioMicSetRawUdpSender(sendRawUdpPacket);
-
-    if (!audioDownlinkInit())
-    {
-        haltWithUiError();
-    }
-
-    if (!audioMicInit())
-    {
-        haltWithUiError();
+        if (!startNetworkServicesIfNeeded())
+        {
+            haltWithUiError();
+        }
     }
 
     showStartScreen();
 
     startTouchTask();
-    audioMicStartTask();
-    audioDownlinkStartTasks();
 }
 
 void loop()
@@ -280,17 +318,45 @@ void loop()
         if (selectedIndex >= 0 && selectedIndex < wifiNetworkCount)
         {
             selectedWifiIndex = selectedIndex;
+            wifiSSID = wifiNetworkNames[selectedIndex];
+            wifiPASS = "";
 
             Serial.print("[WIFI] Selected network: ");
-            Serial.print(wifiNetworkNames[selectedIndex]);
-            Serial.print(" | RSSI=");
-            Serial.println(wifiNetworkRSSI[selectedIndex]);
+            Serial.println(wifiSSID);
 
-            if (currentScreen == SCREEN_WIFI)
-            {
-                uiWifiDrawBase();
-            }
+            showWifiPasswordScreen();
         }
+    }
+
+    if (takeWifiPasswordBackRequest())
+    {
+        showWifiScreen();
+    }
+
+    if (takeWifiPasswordOkRequest())
+    {
+        Serial.print("[WIFI] Trying configured network: ");
+        Serial.println(wifiSSID);
+
+        const bool ok = networkWifiReconnect();
+
+        if (ok)
+        {
+            storagePrefsSave();
+
+            if (!startNetworkServicesIfNeeded())
+            {
+                Serial.println("[NET] Failed to start services after WiFi connect");
+            }
+
+            Serial.println("[WIFI] Connected and saved");
+        }
+        else
+        {
+            Serial.println("[WIFI] Failed to connect");
+        }
+
+        showStartScreen();
     }
 
     if (takeToggleMicRequest() && currentScreen == SCREEN_START)
@@ -298,7 +364,10 @@ void loop()
         handleMicToggle();
     }
 
-    audioMicHandleLoop();
+    if (networkServicesStarted)
+    {
+        audioMicHandleLoop();
+    }
 
     delay(20);
 }

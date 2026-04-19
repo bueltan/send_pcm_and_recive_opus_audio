@@ -21,5 +21,6 @@ enum UiStartAction
 void uiStartInit();
 void uiStartDrawBase();
 void uiStartApplyState(UiState state);
+void uiStartDrawWifiStatus();
 UiStartAction uiStartHandleTouch(uint16_t x, uint16_t y);
 UiState uiStartGetState();

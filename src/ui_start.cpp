@@ -3,6 +3,7 @@
 #include <TFT_eSPI.h>
 
 #include "display_hal.h"
+#include "app_runtime_state.h"
 
 static TFT_eSPI_Button btnMic;
 static volatile UiState uiState = UI_READY;
@@ -57,11 +58,45 @@ static void drawTitle()
     screenLock();
     tft.setTextColor(TFT_GREEN, TFT_BLACK);
     tft.setTextSize(2);
-    tft.setCursor(22, 22);
+    tft.setCursor(18, 22);
     tft.print("HAND-WALL-E");
     screenUnlock();
 }
 
+static void drawWifiStatus()
+{
+    TFT_eSPI &tft = display();
+
+    const uint16_t dotColor = wifiReady ? TFT_GREEN : TFT_WHITE;
+
+    // WiFi indicator placed below the setup button
+    static constexpr int WIFI_BOX_X = 184;
+    static constexpr int WIFI_BOX_Y = 54;
+    static constexpr int WIFI_BOX_W = 48;
+    static constexpr int WIFI_BOX_H = 14;
+
+    static constexpr int WIFI_TEXT_X = 186;
+    static constexpr int WIFI_TEXT_Y = 58;
+
+    static constexpr int WIFI_DOT_X = 223;
+    static constexpr int WIFI_DOT_Y = 61;
+    static constexpr int WIFI_DOT_R = 4;
+
+    screenLock();
+
+    // Clear only the WiFi indicator area
+    tft.fillRect(WIFI_BOX_X, WIFI_BOX_Y, WIFI_BOX_W, WIFI_BOX_H, TFT_BLACK);
+
+    tft.setTextColor(TFT_GREEN, TFT_BLACK);
+    tft.setTextSize(1);
+    tft.setCursor(WIFI_TEXT_X, WIFI_TEXT_Y);
+    tft.print("WIFI");
+
+    tft.fillCircle(WIFI_DOT_X, WIFI_DOT_Y, WIFI_DOT_R, dotColor);
+    tft.drawCircle(WIFI_DOT_X, WIFI_DOT_Y, WIFI_DOT_R, TFT_GREEN);
+
+    screenUnlock();
+}
 static void drawStatusText(const char *line1, const char *line2 = nullptr)
 {
     TFT_eSPI &tft = display();
@@ -137,11 +172,9 @@ void uiStartDrawBase()
     screenUnlock();
 
     drawTitle();
+    drawWifiStatus();
     drawSetupButton(false);
 
-    // Importante: como uiState ya arranca en UI_READY,
-    // llamamos primero a drawStatusText y drawMicButton
-    // para evitar que uiStartApplyState(UI_READY) salga por early return.
     drawStatusText("Ready", "Tap MIC to talk");
     drawMicButton(false);
 }
@@ -149,7 +182,10 @@ void uiStartDrawBase()
 void uiStartApplyState(UiState state)
 {
     if (state == uiState)
+    {
+        drawWifiStatus();
         return;
+    }
 
     uiState = state;
 
@@ -175,6 +211,12 @@ void uiStartApplyState(UiState state)
 
     drawMicButton(false);
     drawSetupButton(false);
+    drawWifiStatus();
+}
+
+void uiStartDrawWifiStatus()
+{
+    drawWifiStatus();
 }
 
 UiStartAction uiStartHandleTouch(uint16_t x, uint16_t y)

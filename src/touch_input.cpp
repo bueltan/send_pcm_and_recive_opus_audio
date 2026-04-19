@@ -9,6 +9,7 @@
 #include "ui_setup.h"
 #include "ui_start.h"
 #include "ui_wifi.h"
+#include "ui_wifi_password.h"
 
 static volatile bool toggleMicRequested = false;
 static volatile bool openSetupRequested = false;
@@ -22,6 +23,9 @@ static volatile bool wifiScanRequested = false;
 static volatile bool wifiBackRequested = false;
 static volatile bool wifiSelectRequested = false;
 static volatile int wifiSelectedIndexRequested = -1;
+
+static volatile bool wifiPasswordBackRequested = false;
+static volatile bool wifiPasswordOkRequested = false;
 
 static void handleStartScreenTouch(uint16_t x, uint16_t y)
 {
@@ -91,6 +95,20 @@ static void handleWifiScreenTouch(uint16_t x, uint16_t y)
     }
 }
 
+static void handleWifiPasswordScreenTouch(uint16_t x, uint16_t y)
+{
+    UiWifiPasswordAction action = uiWifiPasswordHandleTouch(x, y);
+
+    if (action == UI_WIFI_PASSWORD_ACTION_BACK)
+    {
+        wifiPasswordBackRequested = true;
+    }
+    else if (action == UI_WIFI_PASSWORD_ACTION_OK)
+    {
+        wifiPasswordOkRequested = true;
+    }
+}
+
 static void taskTouch(void *parameter)
 {
     (void)parameter;
@@ -112,6 +130,10 @@ static void taskTouch(void *parameter)
             else if (currentScreen == SCREEN_WIFI)
             {
                 handleWifiScreenTouch(x, y);
+            }
+            else if (currentScreen == SCREEN_WIFI_PASSWORD)
+            {
+                handleWifiPasswordScreenTouch(x, y);
             }
             else
             {
@@ -208,5 +230,23 @@ bool takeWifiSelectRequest(int &index)
     index = wifiSelectedIndexRequested;
     wifiSelectRequested = false;
     wifiSelectedIndexRequested = -1;
+    return true;
+}
+
+bool takeWifiPasswordBackRequest()
+{
+    if (!wifiPasswordBackRequested)
+        return false;
+
+    wifiPasswordBackRequested = false;
+    return true;
+}
+
+bool takeWifiPasswordOkRequest()
+{
+    if (!wifiPasswordOkRequested)
+        return false;
+
+    wifiPasswordOkRequested = false;
     return true;
 }

@@ -13,3 +13,6 @@ bool takeSetupBackRequest();
 bool takeWifiScanRequest();
 bool takeWifiBackRequest();
 bool takeWifiSelectRequest(int &index);
+
+bool takeWifiPasswordBackRequest();
+bool takeWifiPasswordOkRequest();
