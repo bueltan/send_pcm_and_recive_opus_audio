@@ -10,12 +10,8 @@
 #include "audio_downlink.h"
 #include "network_udp.h"
 #include "app_config.h"
-// ============================================================
-// Shared globals defined here
-// ============================================================
+
 SemaphoreHandle_t udpMutex = nullptr;
-
-
 
 // ============================================================
 // Helpers
