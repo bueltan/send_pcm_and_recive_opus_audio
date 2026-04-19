@@ -15,7 +15,7 @@
 static const char *WIFI_SSID = "MOVISTAR-WIFI6-B700";
 static const char *WIFI_PASS = "uDRsVe6jpvSfSCiQ9wPL";
 
-static const char *SERVER_IP = "74.208.158.226";
+static const char *SERVER_IP = "192.168.1.42";
 static const uint16_t SERVER_PORT = 9999;
 static const uint16_t LOCAL_UDP_PORT = 12000;
 
@@ -42,19 +42,19 @@ static const size_t HEADER_SIZE = 18;
 // Uplink PCM protocol
 // ============================================================
 static const uint8_t PCM_MAGIC[4] = {'P', 'C', 'M', '!'};
-static const uint16_t PCM_FRAME_SAMPLES = 320;               // 20 ms @ 16 kHz
+static const uint16_t PCM_FRAME_SAMPLES = 320;               // 40 ms @ 16 kHz
 static const size_t PCM_FRAME_BYTES = PCM_FRAME_SAMPLES * 2; // PCM16 mono
 static const size_t PCM_PACKET_MAX = HEADER_SIZE + PCM_FRAME_BYTES;
 
 // ============================================================
 // Jitter buffer
 // ============================================================
-static const int JITTER_SLOTS = 170;
-static const int START_BUFFERED_PACKETS = 50;
-static const int REBUFFER_PACKETS = 40;
-static const int LOW_WATER_PACKETS = 12;
-static const int MAX_CONSECUTIVE_MISSES = 10;
-static const uint32_t MAX_AHEAD_WINDOW = 100;
+static const int JITTER_SLOTS = 48;
+static const int START_BUFFERED_PACKETS = 20;
+static const int REBUFFER_PACKETS = 14;
+static const int LOW_WATER_PACKETS = 6;
+static const int MAX_CONSECUTIVE_MISSES = 6;
+static const uint32_t MAX_AHEAD_WINDOW = 48;
 static const uint32_t HARD_REBUFFER_GAP = 28;
 static const uint32_t HARD_REBUFFER_MISSES = 10;
 
@@ -66,36 +66,29 @@ static const uint32_t PLAYBACK_PERIOD_MS = 20;
 static const uint32_t STATS_PERIOD_MS = 2000;
 
 // ============================================================
-// UI / state
+// UI
 // ============================================================
-static TFT_eSPI_Button btnMic;
-static volatile bool requestToggleMic = false;
-static volatile bool wifiReady = false;
+static TFT_eSPI_Button btnPlay;
+static TFT_eSPI_Button btnSend;
 
-enum UiState : uint8_t
-{
-    UI_READY = 0,
-    UI_LISTENING,
-    UI_THINKING,
-    UI_SPEAKING,
-    UI_ERROR,
-};
+static volatile bool requestStartPlayback = false;
+static volatile bool requestSendAudio = false;
 
-static volatile UiState uiState = UI_READY;
-static volatile bool micEnabled = false;
-static volatile bool micStreamActive = false;
-static volatile bool awaitingResponse = false;
-static volatile bool isPlayingResponse = false;
+static volatile bool isStreaming = false;
 static volatile bool streamFinished = true;
+static volatile bool wifiReady = false;
 
 // forward declarations
 static void drawStatusText(const char *line1, const char *line2 = nullptr);
-static void drawMicButton(bool inverted = false);
-static void applyUiState(UiState newState);
+static void drawPlayButton(bool inverted = false);
+static void drawSendButton(bool inverted = false);
 
 // ============================================================
 // MIC / UPLINK PCM
 // ============================================================
+static volatile bool sendAudioEnabled = false;
+static volatile bool sendAudioActive = false;
+
 static uint32_t uplinkSequence = 0;
 static uint32_t uplinkPtsSamples = 0;
 
@@ -191,107 +184,6 @@ static void write_be32(uint8_t *p, uint32_t v)
     p[1] = (uint8_t)((v >> 16) & 0xFF);
     p[2] = (uint8_t)((v >> 8) & 0xFF);
     p[3] = (uint8_t)(v & 0xFF);
-}
-
-// ============================================================
-// UI helpers
-// ============================================================
-static const char *uiStateToButtonLabel(UiState state)
-{
-    switch (state)
-    {
-    case UI_LISTENING:
-        return "STOP";
-    case UI_THINKING:
-        return "WAIT";
-    case UI_SPEAKING:
-        return "MIC";
-    case UI_ERROR:
-        return "ERR";
-    case UI_READY:
-    default:
-        return "MIC";
-    }
-}
-
-static void drawStatusText(const char *line1, const char *line2)
-{
-    TFT_eSPI &tft = display();
-
-    screenLock();
-    tft.fillRect(10, 70, 220, 90, TFT_BLACK);
-    tft.drawRect(10, 70, 220, 90, TFT_GREEN);
-
-    tft.setTextColor(TFT_GREEN, TFT_BLACK);
-    tft.setTextSize(2);
-    tft.setCursor(18, 88);
-    tft.print(line1 ? line1 : "");
-
-    if (line2)
-    {
-        tft.setTextSize(1);
-        tft.setCursor(18, 126);
-        tft.print(line2);
-    }
-    screenUnlock();
-}
-
-static void drawMicButton(bool inverted)
-{
-    TFT_eSPI &tft = display();
-
-    screenLock();
-    btnMic.initButton(
-        &tft,
-        120, 235,
-        140, 78,
-        TFT_GREEN, TFT_BLACK, TFT_GREEN,
-        (char *)uiStateToButtonLabel(uiState),
-        2);
-    btnMic.drawButton(inverted);
-    screenUnlock();
-}
-
-static void applyUiState(UiState newState)
-{
-    uiState = newState;
-
-    switch (newState)
-    {
-    case UI_READY:
-        drawStatusText("Ready", "Tap MIC to talk");
-        break;
-    case UI_LISTENING:
-        drawStatusText("Listening", "Tap MIC again to send");
-        break;
-    case UI_THINKING:
-        drawStatusText("Thinking", "Waiting response...");
-        break;
-    case UI_SPEAKING:
-        drawStatusText("Speaking", "Receiving Opus audio...");
-        break;
-    case UI_ERROR:
-    default:
-        drawStatusText("Error", "Check serial log");
-        break;
-    }
-
-    drawMicButton(false);
-}
-
-static void drawUI()
-{
-    TFT_eSPI &tft = display();
-
-    screenLock();
-    tft.fillScreen(TFT_BLACK);
-    tft.setTextColor(TFT_GREEN, TFT_BLACK);
-    tft.setTextSize(2);
-    tft.setCursor(28, 20);
-    tft.print("WALL-E VOICE");
-    screenUnlock();
-
-    applyUiState(UI_READY);
 }
 
 // ============================================================
@@ -408,13 +300,6 @@ static void sendPcmEndPacket()
                   ok ? 1 : 0);
 }
 
-static void sendCommitPacket()
-{
-    static const uint8_t commitMsg[] = {'C', 'O', 'M', 'M', 'I', 'T'};
-    bool ok = sendRawUdpPacket(commitMsg, sizeof(commitMsg));
-    Serial.printf("[MIC] sent COMMIT ok=%d\n", ok ? 1 : 0);
-}
-
 static bool readMicFramePcm16(int16_t *outPcm, size_t sampleCount, int16_t &peakOut)
 {
     size_t bytesRead = 0;
@@ -486,16 +371,15 @@ static void micCaptureTask(void *parameter)
 
     for (;;)
     {
-        const bool active = micEnabled;
+        const bool active = sendAudioEnabled;
 
         if (!active)
         {
             if (lastActive)
             {
                 sendPcmEndPacket();
-                micStreamActive = false;
+                sendAudioActive = false;
                 lastActive = false;
-                commitRequested = true;
                 Serial.println("[MIC] uplink stopped");
             }
 
@@ -506,7 +390,7 @@ static void micCaptureTask(void *parameter)
         if (!lastActive)
         {
             resetUplinkState();
-            micStreamActive = true;
+            sendAudioActive = true;
             lastActive = true;
             Serial.println("[MIC] uplink started");
         }
@@ -625,7 +509,7 @@ static void resetStreamState()
     }
 
     resetDecoderState();
-    isPlayingResponse = false;
+    isStreaming = false;
     streamFinished = false;
 }
 
@@ -853,6 +737,16 @@ static void decodeAndWriteLossRecovery()
     }
 }
 
+static void sendStart()
+{
+    resetStreamState();
+
+    uint8_t startMsg[] = {'S', 'T', 'A', 'R', 'T'};
+    (void)sendRawUdpPacket(startMsg, sizeof(startMsg));
+
+    Serial.println("[UDP] START sent");
+}
+
 static bool parseAndQueuePacket(const uint8_t *buf, size_t len)
 {
     if (len < HEADER_SIZE)
@@ -872,7 +766,7 @@ static bool parseAndQueuePacket(const uint8_t *buf, size_t len)
     if (payload_len > maxSeenPayload)
     {
         maxSeenPayload = payload_len;
-        Serial.printf("[UDP] new max opus payload=%u\n", maxSeenPayload);
+        Serial.printf("new max payload=%u\n", maxSeenPayload);
     }
 
     if (version != VERSION)
@@ -895,8 +789,79 @@ static bool parseAndQueuePacket(const uint8_t *buf, size_t len)
 }
 
 // ============================================================
-// Touch task
+// UI
 // ============================================================
+static void drawStatusText(const char *line1, const char *line2)
+{
+    TFT_eSPI &tft = display();
+
+    screenLock();
+    tft.fillRect(10, 70, 220, 80, TFT_BLACK);
+    tft.drawRect(10, 70, 220, 80, TFT_GREEN);
+
+    tft.setTextColor(TFT_GREEN, TFT_BLACK);
+    tft.setTextSize(2);
+    tft.setCursor(18, 85);
+    tft.print(line1 ? line1 : "");
+
+    if (line2)
+    {
+        tft.setTextSize(1);
+        tft.setCursor(18, 120);
+        tft.print(line2);
+    }
+    screenUnlock();
+}
+
+static void drawPlayButton(bool inverted)
+{
+    TFT_eSPI &tft = display();
+
+    screenLock();
+    btnPlay.initButton(
+        &tft,
+        70, 235,
+        95, 70,
+        TFT_GREEN, TFT_BLACK, TFT_GREEN,
+        (char *)"PLAY",
+        2);
+    btnPlay.drawButton(inverted);
+    screenUnlock();
+}
+
+static void drawSendButton(bool inverted)
+{
+    TFT_eSPI &tft = display();
+
+    screenLock();
+    btnSend.initButton(
+        &tft,
+        170, 235,
+        95, 70,
+        TFT_GREEN, TFT_BLACK, TFT_GREEN,
+        (char *)(sendAudioEnabled ? "STOP" : "SEND"),
+        2);
+    btnSend.drawButton(inverted);
+    screenUnlock();
+}
+
+static void drawUI()
+{
+    TFT_eSPI &tft = display();
+
+    screenLock();
+    tft.fillScreen(TFT_BLACK);
+    tft.setTextColor(TFT_GREEN, TFT_BLACK);
+    tft.setTextSize(2);
+    tft.setCursor(18, 20);
+    tft.print("UDP AUDIO BRIDGE");
+    screenUnlock();
+
+    drawStatusText("Ready", "PLAY=opus down | SEND=pcm up");
+    drawPlayButton(false);
+    drawSendButton(false);
+}
+
 static void taskTouch(void *parameter)
 {
     (void)parameter;
@@ -907,12 +872,19 @@ static void taskTouch(void *parameter)
 
         if (getTouchPoint(x, y))
         {
-            if (btnMic.contains(x, y))
+            if (btnPlay.contains(x, y))
             {
-                drawMicButton(true);
-                requestToggleMic = true;
+                drawPlayButton(true);
+                requestStartPlayback = true;
                 waitTouchRelease();
-                drawMicButton(false);
+                drawPlayButton(false);
+            }
+            else if (btnSend.contains(x, y))
+            {
+                drawSendButton(true);
+                requestSendAudio = true;
+                waitTouchRelease();
+                drawSendButton(false);
             }
             else
             {
@@ -999,10 +971,9 @@ static void playbackTask(void *parameter)
 
         if (seenEnd && buffered == 0 && expSeq >= eSeq)
         {
-            isPlayingResponse = false;
-            awaitingResponse = false;
+            isStreaming = false;
             streamFinished = true;
-            applyUiState(UI_READY);
+            drawStatusText("Finished", "Tap PLAY to play again");
             continue;
         }
 
@@ -1010,10 +981,9 @@ static void playbackTask(void *parameter)
         {
             if ((nowMs - lastPktMs) > END_TIMEOUT_MS)
             {
-                isPlayingResponse = false;
-                awaitingResponse = false;
+                isStreaming = false;
                 streamFinished = true;
-                applyUiState(UI_READY);
+                drawStatusText("Timeout", "Tap PLAY to retry");
                 continue;
             }
         }
@@ -1046,12 +1016,7 @@ static void playbackTask(void *parameter)
                                       (unsigned long)minSeq, buffered);
                     }
 
-                    if (!isPlayingResponse)
-                    {
-                        isPlayingResponse = true;
-                        awaitingResponse = false;
-                        applyUiState(UI_SPEAKING);
-                    }
+                    drawStatusText("Playing", "Receiving audio...");
                 }
             }
             else
@@ -1095,13 +1060,6 @@ static void playbackTask(void *parameter)
                 xSemaphoreGive(jitterMutex);
             }
             continue;
-        }
-
-        if (!isPlayingResponse)
-        {
-            isPlayingResponse = true;
-            awaitingResponse = false;
-            applyUiState(UI_SPEAKING);
         }
 
         if (xSemaphoreTake(jitterMutex, portMAX_DELAY) == pdTRUE)
@@ -1160,7 +1118,7 @@ static void statsTask(void *parameter)
         }
 
         Serial.printf(
-            "[STATS] rx=%lu dec=%lu fec=%lu plc=%lu miss=%lu drop=%lu dup=%lu late=%lu ahead=%lu malformed=%lu decErr=%lu hardRebuf=%lu buffered=%d expected=%lu highest=%lu end=%d rebuf=%d mic=%d think=%d speak=%d\n",
+            "[STATS] rx=%lu dec=%lu fec=%lu plc=%lu miss=%lu drop=%lu dup=%lu late=%lu ahead=%lu malformed=%lu decErr=%lu hardRebuf=%lu buffered=%d expected=%lu highest=%lu end=%d rebuf=%d send=%d\n",
             (unsigned long)receivedPackets,
             (unsigned long)decodedPackets,
             (unsigned long)fecRecoveredPackets,
@@ -1178,9 +1136,7 @@ static void statsTask(void *parameter)
             (unsigned long)hiSeq,
             seenEnd ? 1 : 0,
             rebuf ? 1 : 0,
-            micEnabled ? 1 : 0,
-            awaitingResponse ? 1 : 0,
-            isPlayingResponse ? 1 : 0);
+            sendAudioEnabled ? 1 : 0);
 
         vTaskDelay(pdMS_TO_TICKS(STATS_PERIOD_MS));
     }
@@ -1250,7 +1206,7 @@ void setup()
 
     resetStreamState();
     streamFinished = true;
-    applyUiState(UI_READY);
+    drawStatusText("Ready", "PLAY=opus down | SEND=pcm up");
 
     xTaskCreatePinnedToCore(udpRxTask, "udpRxTask", 3072, nullptr, 3, nullptr, 1);
     xTaskCreatePinnedToCore(playbackTask, "playbackTask", 8192, nullptr, 2, nullptr, 1);
@@ -1261,35 +1217,24 @@ void setup()
 
 void loop()
 {
-    if (requestToggleMic)
+    if (wifiReady && requestStartPlayback)
     {
-        requestToggleMic = false;
-
-        if (!wifiReady)
-        {
-            applyUiState(UI_ERROR);
-        }
-        else if (!micEnabled && !awaitingResponse)
-        {
-            resetStreamState();
-            micEnabled = true;
-            awaitingResponse = false;
-            isPlayingResponse = false;
-            applyUiState(UI_LISTENING);
-        }
-        else if (micEnabled)
-        {
-            micEnabled = false;
-            awaitingResponse = true;
-            isPlayingResponse = false;
-            applyUiState(UI_THINKING);
-        }
+        requestStartPlayback = false;
+        drawStatusText("Requesting", "Sending START to server...");
+        sendStart();
     }
 
-    if (commitRequested)
+    if (requestSendAudio)
     {
-        commitRequested = false;
-        sendCommitPacket();
+        requestSendAudio = false;
+        sendAudioEnabled = !sendAudioEnabled;
+
+        if (sendAudioEnabled)
+            drawStatusText("SEND ON", "Capturing PCM + UDP");
+        else
+            drawStatusText("SEND OFF", "Stopping uplink...");
+
+        drawSendButton(false);
     }
 
     delay(20);
