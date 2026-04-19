@@ -85,6 +85,9 @@ void uiStartDrawBase()
 
 void uiStartApplyState(UiState state)
 {
+    if (state == uiState)
+        return;
+
     uiState = state;
 
     switch (state)
