@@ -9,21 +9,13 @@
 #include "audio_mic.h"
 #include "audio_downlink.h"
 #include "network_udp.h"
-
+#include "app_config.h"
 // ============================================================
 // Shared globals defined here
 // ============================================================
 SemaphoreHandle_t udpMutex = nullptr;
 
-// ============================================================
-// WiFi / UDP config
-// ============================================================
-static const char *WIFI_SSID = "MOVISTAR-WIFI6-B700";
-static const char *WIFI_PASS = "uDRsVe6jpvSfSCiQ9wPL";
 
-static const char *SERVER_IP = "74.208.158.226";
-static const uint16_t SERVER_PORT = 9999;
-static const uint16_t LOCAL_UDP_PORT = 12000;
 
 // ============================================================
 // Helpers

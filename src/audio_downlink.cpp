@@ -11,42 +11,12 @@
 #include "network_udp.h"
 #include "ui_start.h"
 #include "app_runtime_state.h"
-
-// ============================================================
-// Audio / downlink Opus
-// ============================================================
-static const uint32_t SAMPLE_RATE_HZ = 16000;
-static const uint8_t CHANNELS = 1;
-static const uint16_t FRAME_SAMPLES = 320; // 20 ms @ 16 kHz
-static const uint16_t MAX_DECODE_SAMPLES = FRAME_SAMPLES;
-static const size_t MAX_OPUS_PAYLOAD = 300;
+#include "app_config.h"
 
 // ============================================================
 // Downlink Opus protocol
 // ============================================================
 static const uint8_t OPUS_MAGIC[4] = {'O', 'P', 'U', 'S'};
-static const uint8_t VERSION = 1;
-static const uint8_t FLAG_END = 0x01;
-static const size_t HEADER_SIZE = 18;
-
-// ============================================================
-// Jitter buffer
-// ============================================================
-static const int JITTER_SLOTS = 170;
-static const int START_BUFFERED_PACKETS = 50;
-static const int REBUFFER_PACKETS = 40;
-static const int LOW_WATER_PACKETS = 12;
-static const int MAX_CONSECUTIVE_MISSES = 10;
-static const uint32_t MAX_AHEAD_WINDOW = 100;
-static const uint32_t HARD_REBUFFER_GAP = 28;
-static const uint32_t HARD_REBUFFER_MISSES = 10;
-
-// ============================================================
-// Timing
-// ============================================================
-static const uint32_t END_TIMEOUT_MS = 1800;
-static const uint32_t PLAYBACK_PERIOD_MS = 20;
-static const uint32_t STATS_PERIOD_MS = 2000;
 
 // ============================================================
 // Packet slot
@@ -100,7 +70,7 @@ static int opusErr = 0;
 
 static PacketSlot playbackPkt;
 static int16_t pcmOut[MAX_DECODE_SAMPLES];
-static int16_t silenceFrame[FRAME_SAMPLES] = {0};
+static int16_t silenceFrame[OPUS_FRAME_SAMPLES] = {0};
 
 // ============================================================
 // RTOS / sync
@@ -390,7 +360,7 @@ static bool i2sInit()
 
 static bool opusInit()
 {
-    opusDecoder = opus_decoder_create(SAMPLE_RATE_HZ, CHANNELS, &opusErr);
+    opusDecoder = opus_decoder_create(SAMPLE_RATE_HZ, AUDIO_CHANNELS, &opusErr);
     if (!opusDecoder || opusErr != OPUS_OK)
     {
         Serial.printf("[OPUS] decoder create failed: %d\n", opusErr);
@@ -409,7 +379,7 @@ static void writePcmToI2S(const int16_t *pcm, size_t samples)
 
 static void writeSilenceFrame()
 {
-    writePcmToI2S(silenceFrame, FRAME_SAMPLES);
+    writePcmToI2S(silenceFrame, OPUS_FRAME_SAMPLES);
 }
 
 static void decodeAndWriteLossRecovery()
@@ -423,7 +393,7 @@ static void decodeAndWriteLossRecovery()
             nextPkt.payload,
             nextPkt.payload_len,
             pcmOut,
-            FRAME_SAMPLES,
+            OPUS_FRAME_SAMPLES,
             1);
 
         if (fecSamples > 0)
@@ -439,7 +409,7 @@ static void decodeAndWriteLossRecovery()
         nullptr,
         0,
         pcmOut,
-        FRAME_SAMPLES,
+        OPUS_FRAME_SAMPLES,
         0);
 
     if (plcSamples > 0)
@@ -456,7 +426,7 @@ static void decodeAndWriteLossRecovery()
 
 static bool parseAndQueuePacket(const uint8_t *buf, size_t len)
 {
-    if (len < HEADER_SIZE)
+    if (len < OPUS_HEADER_SIZE)
         return false;
 
     if (memcmp(buf, OPUS_MAGIC, 4) != 0)
@@ -476,23 +446,23 @@ static bool parseAndQueuePacket(const uint8_t *buf, size_t len)
         Serial.printf("[UDP] new max opus payload=%u\n", maxSeenPayload);
     }
 
-    if (version != VERSION)
+    if (version != OPUS_VERSION)
         return false;
 
-    if ((HEADER_SIZE + payload_len) != len)
+    if ((OPUS_HEADER_SIZE + payload_len) != len)
         return false;
 
-    if ((flags & FLAG_END) != 0)
+    if ((flags & OPUS_FLAG_END) != 0)
     {
         markEndPacket(seq);
         Serial.printf("[UDP] END packet seq=%lu\n", (unsigned long)seq);
         return true;
     }
 
-    if (frame_samples != FRAME_SAMPLES)
+    if (frame_samples != OPUS_FRAME_SAMPLES)
         return false;
 
-    return insertPacketLocked(seq, pts_samples, frame_samples, payload_len, flags, buf + HEADER_SIZE);
+    return insertPacketLocked(seq, pts_samples, frame_samples, payload_len, flags, buf + OPUS_HEADER_SIZE);
 }
 
 // ============================================================
@@ -501,7 +471,7 @@ static bool parseAndQueuePacket(const uint8_t *buf, size_t len)
 static void udpRxTask(void *parameter)
 {
     (void)parameter;
-    static uint8_t rxBuf[HEADER_SIZE + MAX_OPUS_PAYLOAD + 16];
+    static uint8_t rxBuf[OPUS_HEADER_SIZE + MAX_OPUS_PAYLOAD + 16];
 
     while (true)
     {
@@ -679,7 +649,7 @@ static void playbackTask(void *parameter)
             playbackPkt.payload,
             playbackPkt.payload_len,
             pcmOut,
-            FRAME_SAMPLES,
+            OPUS_FRAME_SAMPLES,
             0);
 
         if (decodedSamples < 0)

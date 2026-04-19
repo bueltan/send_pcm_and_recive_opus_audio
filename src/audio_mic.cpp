@@ -8,24 +8,13 @@
 #include "pins.h"
 #include "app_state.h"
 #include "app_runtime_state.h"
-
+#include "app_config.h"
 // ============================================================
 // Audio uplink configuration
 // ============================================================
-static const uint32_t SAMPLE_RATE_HZ = 16000;
-static const uint8_t VERSION = 1;
 
 static const uint8_t PCM_MAGIC[4] = {'P', 'C', 'M', '!'};
-static const uint8_t FLAG_END = 0x01;
 
-static const size_t HEADER_SIZE = 18;
-static const uint16_t PCM_FRAME_SAMPLES = 320;               // 20 ms @ 16 kHz
-static const size_t PCM_FRAME_BYTES = PCM_FRAME_SAMPLES * 2; // PCM16 mono
-static const size_t PCM_PACKET_MAX = HEADER_SIZE + PCM_FRAME_BYTES;
-
-static const uint32_t COMMIT_DELAY_MS = 80;
-static const uint8_t PCM_END_REPEAT_COUNT = 3;
-static const uint32_t PCM_END_REPEAT_GAP_MS = 12;
 
 // ============================================================
 // Module state
@@ -78,7 +67,7 @@ static bool sendPcmAudioPacket(
         return false;
 
     memcpy(pcmUplinkPacket + 0, PCM_MAGIC, 4);
-    pcmUplinkPacket[4] = VERSION;
+    pcmUplinkPacket[4] = PCM_VERSION;
     pcmUplinkPacket[5] = flags;
 
     write_be32(pcmUplinkPacket + 6, seq);
@@ -88,10 +77,10 @@ static bool sendPcmAudioPacket(
 
     if (payloadLen > 0 && payload != nullptr)
     {
-        memcpy(pcmUplinkPacket + HEADER_SIZE, payload, payloadLen);
+        memcpy(pcmUplinkPacket + PCM_HEADER_SIZE, payload, payloadLen);
     }
 
-    return sendRawPacket(pcmUplinkPacket, HEADER_SIZE + payloadLen);
+    return sendRawPacket(pcmUplinkPacket, PCM_HEADER_SIZE + payloadLen);
 }
 
 static void sendSinglePcmEndPacket()
@@ -102,7 +91,7 @@ static void sendSinglePcmEndPacket()
         0,
         nullptr,
         0,
-        FLAG_END);
+        PCM_FLAG_END);
 
     Serial.printf("[MIC] sent PCM END seq=%lu ok=%d\n",
                   (unsigned long)uplinkSequence,
