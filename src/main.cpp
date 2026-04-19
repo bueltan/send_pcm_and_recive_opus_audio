@@ -65,6 +65,11 @@ static const uint32_t END_TIMEOUT_MS = 1800;
 static const uint32_t PLAYBACK_PERIOD_MS = 20;
 static const uint32_t STATS_PERIOD_MS = 2000;
 
+// uplink turn-closing robustness
+static const uint32_t COMMIT_DELAY_MS = 80;     // <= 100 ms as requested
+static const uint8_t PCM_END_REPEAT_COUNT = 3;
+static const uint32_t PCM_END_REPEAT_GAP_MS = 12;
+
 // ============================================================
 // UI / state
 // ============================================================
@@ -102,6 +107,8 @@ static uint32_t uplinkPtsSamples = 0;
 static int32_t micI2SBuffer[PCM_FRAME_SAMPLES];
 static int16_t micPcm16[PCM_FRAME_SAMPLES];
 static uint8_t pcmUplinkPacket[PCM_PACKET_MAX];
+
+static volatile uint32_t commitRequestAtMs = 0;
 
 // ============================================================
 // Packet slot
@@ -393,7 +400,7 @@ static bool sendPcmAudioPacket(
     return sendRawUdpPacket(pcmUplinkPacket, HEADER_SIZE + payloadLen);
 }
 
-static void sendPcmEndPacket()
+static void sendSinglePcmEndPacket()
 {
     bool ok = sendPcmAudioPacket(
         uplinkSequence,
@@ -406,6 +413,19 @@ static void sendPcmEndPacket()
     Serial.printf("[MIC] sent PCM END seq=%lu ok=%d\n",
                   (unsigned long)uplinkSequence,
                   ok ? 1 : 0);
+}
+
+static void sendRepeatedPcmEndPackets()
+{
+    for (uint8_t i = 0; i < PCM_END_REPEAT_COUNT; ++i)
+    {
+        sendSinglePcmEndPacket();
+
+        if (i + 1 < PCM_END_REPEAT_COUNT)
+        {
+            vTaskDelay(pdMS_TO_TICKS(PCM_END_REPEAT_GAP_MS));
+        }
+    }
 }
 
 static void sendCommitPacket()
@@ -492,11 +512,14 @@ static void micCaptureTask(void *parameter)
         {
             if (lastActive)
             {
-                sendPcmEndPacket();
+                sendRepeatedPcmEndPackets();
                 micStreamActive = false;
                 lastActive = false;
                 commitRequested = true;
-                Serial.println("[MIC] uplink stopped");
+                commitRequestAtMs = millis();
+
+                Serial.printf("[MIC] uplink stopped, commit scheduled in %lu ms\n",
+                              (unsigned long)COMMIT_DELAY_MS);
             }
 
             vTaskDelay(pdMS_TO_TICKS(20));
@@ -1288,8 +1311,12 @@ void loop()
 
     if (commitRequested)
     {
-        commitRequested = false;
-        sendCommitPacket();
+        const uint32_t nowMs = millis();
+        if ((uint32_t)(nowMs - commitRequestAtMs) >= COMMIT_DELAY_MS)
+        {
+            commitRequested = false;
+            sendCommitPacket();
+        }
     }
 
     delay(20);
