@@ -8,6 +8,9 @@
 extern volatile bool commitRequested;
 extern volatile bool cancelRequested;
 
+extern SemaphoreHandle_t screenMutex;
+extern SemaphoreHandle_t udpMutex;
+
 extern QueueHandle_t udpAudioQueue;
 extern QueueHandle_t udpControlQueue;
 
@@ -54,9 +57,6 @@ extern unsigned long lastPingTime;
 extern unsigned long lastPongTime;
 extern bool udpSocketStarted;
 
-// ====================== SHARED RTOS OBJECTS ======================
-extern SemaphoreHandle_t screenMutex;
-
 // ====================== CONFIG SCREEN STATE ======================
 extern String inputText;
 extern bool capsLock;
@@ -70,5 +70,3 @@ extern uint16_t t_y;
 
 // ====================== AUDIO ======================
 extern uint32_t sequence;
-
-

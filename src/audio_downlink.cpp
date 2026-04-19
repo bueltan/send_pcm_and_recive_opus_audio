@@ -1,25 +1,16 @@
+#include "audio_downlink.h"
+
 #include <Arduino.h>
-#include <WiFi.h>
-#include <WiFiUdp.h>
 #include <driver/i2s.h>
 #include <opus.h>
-#include <TFT_eSPI.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+#include <freertos/task.h>
 
 #include "pins.h"
-#include "display_hal.h"
-#include "app_state.h"
-
-// ============================================================
-// WiFi / UDP
-// ============================================================
-static const char *WIFI_SSID = "MOVISTAR-WIFI6-B700";
-static const char *WIFI_PASS = "uDRsVe6jpvSfSCiQ9wPL";
-
-static const char *SERVER_IP = "192.168.1.42";
-static const uint16_t SERVER_PORT = 9999;
-static const uint16_t LOCAL_UDP_PORT = 12000;
-
-static WiFiUDP udp;
+#include "network_udp.h"
+#include "ui_start.h"
+#include "app_runtime_state.h"
 
 // ============================================================
 // Audio / downlink Opus
@@ -39,22 +30,14 @@ static const uint8_t FLAG_END = 0x01;
 static const size_t HEADER_SIZE = 18;
 
 // ============================================================
-// Uplink PCM protocol
-// ============================================================
-static const uint8_t PCM_MAGIC[4] = {'P', 'C', 'M', '!'};
-static const uint16_t PCM_FRAME_SAMPLES = 320;               // 40 ms @ 16 kHz
-static const size_t PCM_FRAME_BYTES = PCM_FRAME_SAMPLES * 2; // PCM16 mono
-static const size_t PCM_PACKET_MAX = HEADER_SIZE + PCM_FRAME_BYTES;
-
-// ============================================================
 // Jitter buffer
 // ============================================================
-static const int JITTER_SLOTS = 48;
-static const int START_BUFFERED_PACKETS = 20;
-static const int REBUFFER_PACKETS = 14;
-static const int LOW_WATER_PACKETS = 6;
-static const int MAX_CONSECUTIVE_MISSES = 6;
-static const uint32_t MAX_AHEAD_WINDOW = 48;
+static const int JITTER_SLOTS = 170;
+static const int START_BUFFERED_PACKETS = 50;
+static const int REBUFFER_PACKETS = 40;
+static const int LOW_WATER_PACKETS = 12;
+static const int MAX_CONSECUTIVE_MISSES = 10;
+static const uint32_t MAX_AHEAD_WINDOW = 100;
 static const uint32_t HARD_REBUFFER_GAP = 28;
 static const uint32_t HARD_REBUFFER_MISSES = 10;
 
@@ -64,37 +47,6 @@ static const uint32_t HARD_REBUFFER_MISSES = 10;
 static const uint32_t END_TIMEOUT_MS = 1800;
 static const uint32_t PLAYBACK_PERIOD_MS = 20;
 static const uint32_t STATS_PERIOD_MS = 2000;
-
-// ============================================================
-// UI
-// ============================================================
-static TFT_eSPI_Button btnPlay;
-static TFT_eSPI_Button btnSend;
-
-static volatile bool requestStartPlayback = false;
-static volatile bool requestSendAudio = false;
-
-static volatile bool isStreaming = false;
-static volatile bool streamFinished = true;
-static volatile bool wifiReady = false;
-
-// forward declarations
-static void drawStatusText(const char *line1, const char *line2 = nullptr);
-static void drawPlayButton(bool inverted = false);
-static void drawSendButton(bool inverted = false);
-
-// ============================================================
-// MIC / UPLINK PCM
-// ============================================================
-static volatile bool sendAudioEnabled = false;
-static volatile bool sendAudioActive = false;
-
-static uint32_t uplinkSequence = 0;
-static uint32_t uplinkPtsSamples = 0;
-
-static int32_t micI2SBuffer[PCM_FRAME_SAMPLES];
-static int16_t micPcm16[PCM_FRAME_SAMPLES];
-static uint8_t pcmUplinkPacket[PCM_PACKET_MAX];
 
 // ============================================================
 // Packet slot
@@ -154,7 +106,7 @@ static int16_t silenceFrame[FRAME_SAMPLES] = {0};
 // RTOS / sync
 // ============================================================
 static SemaphoreHandle_t jitterMutex = nullptr;
-SemaphoreHandle_t udpMutex = nullptr;
+
 // ============================================================
 // Helpers
 // ============================================================
@@ -171,242 +123,8 @@ static uint32_t read_be32(const uint8_t *p)
            uint32_t(p[3]);
 }
 
-static void write_be16(uint8_t *p, uint16_t v)
-{
-    p[0] = (uint8_t)((v >> 8) & 0xFF);
-    p[1] = (uint8_t)(v & 0xFF);
-}
-
-static void write_be32(uint8_t *p, uint32_t v)
-{
-    p[0] = (uint8_t)((v >> 24) & 0xFF);
-    p[1] = (uint8_t)((v >> 16) & 0xFF);
-    p[2] = (uint8_t)((v >> 8) & 0xFF);
-    p[3] = (uint8_t)(v & 0xFF);
-}
-
 // ============================================================
-// Uplink PCM
-// ============================================================
-static bool initI2SMic()
-{
-    i2s_config_t i2s_config = {};
-    i2s_config.mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX);
-    i2s_config.sample_rate = SAMPLE_RATE_HZ;
-    i2s_config.bits_per_sample = I2S_BITS_PER_SAMPLE_32BIT;
-    i2s_config.channel_format = I2S_CHANNEL_FMT_ONLY_RIGHT;
-    i2s_config.communication_format = I2S_COMM_FORMAT_STAND_I2S;
-    i2s_config.intr_alloc_flags = ESP_INTR_FLAG_LEVEL1;
-    i2s_config.dma_buf_count = 8;
-    i2s_config.dma_buf_len = 160;
-    i2s_config.use_apll = false;
-    i2s_config.tx_desc_auto_clear = false;
-    i2s_config.fixed_mclk = 0;
-
-    i2s_pin_config_t pin_config = {};
-    pin_config.bck_io_num = I2S_MIC_SCK;
-    pin_config.ws_io_num = I2S_MIC_WS;
-    pin_config.data_out_num = I2S_PIN_NO_CHANGE;
-    pin_config.data_in_num = I2S_MIC_SD;
-
-    esp_err_t err = i2s_driver_install(I2S_MIC_PORT, &i2s_config, 0, NULL);
-    if (err != ESP_OK)
-    {
-        Serial.printf("[MIC] i2s_driver_install failed: %d\n", err);
-        return false;
-    }
-
-    err = i2s_set_pin(I2S_MIC_PORT, &pin_config);
-    if (err != ESP_OK)
-    {
-        Serial.printf("[MIC] i2s_set_pin failed: %d\n", err);
-        return false;
-    }
-
-    err = i2s_zero_dma_buffer(I2S_MIC_PORT);
-    if (err != ESP_OK)
-    {
-        Serial.printf("[MIC] i2s_zero_dma_buffer failed: %d\n", err);
-        return false;
-    }
-
-    Serial.println("[MIC] I2S mic ready");
-    return true;
-}
-
-static void resetUplinkState()
-{
-    uplinkSequence = 0;
-    uplinkPtsSamples = 0;
-}
-
-static bool sendRawUdpPacket(const uint8_t *data, size_t len)
-{
-    if (udpMutex == nullptr)
-        return false;
-
-    if (xSemaphoreTake(udpMutex, pdMS_TO_TICKS(50)) != pdTRUE)
-        return false;
-
-    udp.beginPacket(SERVER_IP, SERVER_PORT);
-    udp.write(data, len);
-    int ok = udp.endPacket();
-
-    xSemaphoreGive(udpMutex);
-    return ok == 1;
-}
-
-static bool sendPcmAudioPacket(
-    uint32_t seq,
-    uint32_t ptsSamples,
-    uint16_t sampleCount,
-    const uint8_t *payload,
-    uint16_t payloadLen,
-    uint8_t flags)
-{
-    if (payloadLen > PCM_FRAME_BYTES)
-        return false;
-
-    memcpy(pcmUplinkPacket + 0, PCM_MAGIC, 4);
-    pcmUplinkPacket[4] = VERSION;
-    pcmUplinkPacket[5] = flags;
-
-    write_be32(pcmUplinkPacket + 6, seq);
-    write_be32(pcmUplinkPacket + 10, ptsSamples);
-    write_be16(pcmUplinkPacket + 14, sampleCount);
-    write_be16(pcmUplinkPacket + 16, payloadLen);
-
-    if (payloadLen > 0 && payload != nullptr)
-    {
-        memcpy(pcmUplinkPacket + HEADER_SIZE, payload, payloadLen);
-    }
-
-    return sendRawUdpPacket(pcmUplinkPacket, HEADER_SIZE + payloadLen);
-}
-
-static void sendPcmEndPacket()
-{
-    bool ok = sendPcmAudioPacket(
-        uplinkSequence,
-        uplinkPtsSamples,
-        0,
-        nullptr,
-        0,
-        FLAG_END);
-
-    Serial.printf("[MIC] sent PCM END seq=%lu ok=%d\n",
-                  (unsigned long)uplinkSequence,
-                  ok ? 1 : 0);
-}
-
-static bool readMicFramePcm16(int16_t *outPcm, size_t sampleCount, int16_t &peakOut)
-{
-    size_t bytesRead = 0;
-    peakOut = 0;
-
-    esp_err_t result = i2s_read(
-        I2S_MIC_PORT,
-        micI2SBuffer,
-        sampleCount * sizeof(int32_t),
-        &bytesRead,
-        portMAX_DELAY);
-
-    if (result != ESP_OK || bytesRead == 0)
-        return false;
-
-    const int samplesRead = bytesRead / sizeof(int32_t);
-    if (samplesRead != (int)sampleCount)
-        return false;
-
-    for (int i = 0; i < samplesRead; ++i)
-    {
-        const int32_t raw = micI2SBuffer[i];
-        const int16_t sample = (int16_t)(raw >> 12);
-        outPcm[i] = sample;
-
-        const int16_t absVal = (sample < 0) ? -sample : sample;
-        if (absVal > peakOut)
-            peakOut = absVal;
-    }
-
-    return true;
-}
-
-static bool sendMicPcmFrame(const int16_t *pcm16, int16_t peak)
-{
-    const uint8_t *payload = reinterpret_cast<const uint8_t *>(pcm16);
-    const uint16_t payloadLen = (uint16_t)(PCM_FRAME_SAMPLES * sizeof(int16_t));
-
-    const bool ok = sendPcmAudioPacket(
-        uplinkSequence,
-        uplinkPtsSamples,
-        PCM_FRAME_SAMPLES,
-        payload,
-        payloadLen,
-        0);
-
-    if (uplinkSequence < 8 || (uplinkSequence % 50) == 0)
-    {
-        Serial.printf("[MIC] sent PCM seq=%lu pts=%lu bytes=%u peak=%d ok=%d\n",
-                      (unsigned long)uplinkSequence,
-                      (unsigned long)uplinkPtsSamples,
-                      payloadLen,
-                      peak,
-                      ok ? 1 : 0);
-    }
-
-    uplinkSequence++;
-    uplinkPtsSamples += PCM_FRAME_SAMPLES;
-
-    return ok;
-}
-
-static void micCaptureTask(void *parameter)
-{
-    (void)parameter;
-
-    int16_t peak = 0;
-    bool lastActive = false;
-
-    for (;;)
-    {
-        const bool active = sendAudioEnabled;
-
-        if (!active)
-        {
-            if (lastActive)
-            {
-                sendPcmEndPacket();
-                sendAudioActive = false;
-                lastActive = false;
-                Serial.println("[MIC] uplink stopped");
-            }
-
-            vTaskDelay(pdMS_TO_TICKS(20));
-            continue;
-        }
-
-        if (!lastActive)
-        {
-            resetUplinkState();
-            sendAudioActive = true;
-            lastActive = true;
-            Serial.println("[MIC] uplink started");
-        }
-
-        if (!readMicFramePcm16(micPcm16, PCM_FRAME_SAMPLES, peak))
-        {
-            vTaskDelay(pdMS_TO_TICKS(2));
-            continue;
-        }
-
-        (void)sendMicPcmFrame(micPcm16, peak);
-        vTaskDelay(pdMS_TO_TICKS(1));
-    }
-}
-
-// ============================================================
-// Downlink jitter / decode
+// Jitter helpers
 // ============================================================
 static void clearJitterNoLock()
 {
@@ -474,7 +192,7 @@ static void resetDecoderState()
         opus_decoder_ctl(opusDecoder, OPUS_RESET_STATE);
 }
 
-static void resetStreamState()
+void audioDownlinkResetStreamState()
 {
     if (xSemaphoreTake(jitterMutex, portMAX_DELAY) == pdTRUE)
     {
@@ -508,7 +226,7 @@ static void resetStreamState()
     }
 
     resetDecoderState();
-    isStreaming = false;
+    isPlayingResponse = false;
     streamFinished = false;
 }
 
@@ -736,16 +454,6 @@ static void decodeAndWriteLossRecovery()
     }
 }
 
-static void sendStart()
-{
-    resetStreamState();
-
-    uint8_t startMsg[] = {'S', 'T', 'A', 'R', 'T'};
-    (void)sendRawUdpPacket(startMsg, sizeof(startMsg));
-
-    Serial.println("[UDP] START sent");
-}
-
 static bool parseAndQueuePacket(const uint8_t *buf, size_t len)
 {
     if (len < HEADER_SIZE)
@@ -765,7 +473,7 @@ static bool parseAndQueuePacket(const uint8_t *buf, size_t len)
     if (payload_len > maxSeenPayload)
     {
         maxSeenPayload = payload_len;
-        Serial.printf("new max payload=%u\n", maxSeenPayload);
+        Serial.printf("[UDP] new max opus payload=%u\n", maxSeenPayload);
     }
 
     if (version != VERSION)
@@ -788,114 +496,6 @@ static bool parseAndQueuePacket(const uint8_t *buf, size_t len)
 }
 
 // ============================================================
-// UI
-// ============================================================
-static void drawStatusText(const char *line1, const char *line2)
-{
-    TFT_eSPI &tft = display();
-
-    screenLock();
-    tft.fillRect(10, 70, 220, 80, TFT_BLACK);
-    tft.drawRect(10, 70, 220, 80, TFT_GREEN);
-
-    tft.setTextColor(TFT_GREEN, TFT_BLACK);
-    tft.setTextSize(2);
-    tft.setCursor(18, 85);
-    tft.print(line1 ? line1 : "");
-
-    if (line2)
-    {
-        tft.setTextSize(1);
-        tft.setCursor(18, 120);
-        tft.print(line2);
-    }
-    screenUnlock();
-}
-
-static void drawPlayButton(bool inverted)
-{
-    TFT_eSPI &tft = display();
-
-    screenLock();
-    btnPlay.initButton(
-        &tft,
-        70, 235,
-        95, 70,
-        TFT_GREEN, TFT_BLACK, TFT_GREEN,
-        (char *)"PLAY",
-        2);
-    btnPlay.drawButton(inverted);
-    screenUnlock();
-}
-
-static void drawSendButton(bool inverted)
-{
-    TFT_eSPI &tft = display();
-
-    screenLock();
-    btnSend.initButton(
-        &tft,
-        170, 235,
-        95, 70,
-        TFT_GREEN, TFT_BLACK, TFT_GREEN,
-        (char *)(sendAudioEnabled ? "STOP" : "SEND"),
-        2);
-    btnSend.drawButton(inverted);
-    screenUnlock();
-}
-
-static void drawUI()
-{
-    TFT_eSPI &tft = display();
-
-    screenLock();
-    tft.fillScreen(TFT_BLACK);
-    tft.setTextColor(TFT_GREEN, TFT_BLACK);
-    tft.setTextSize(2);
-    tft.setCursor(18, 20);
-    tft.print("UDP AUDIO BRIDGE");
-    screenUnlock();
-
-    drawStatusText("Ready", "PLAY=opus down | SEND=pcm up");
-    drawPlayButton(false);
-    drawSendButton(false);
-}
-
-static void taskTouch(void *parameter)
-{
-    (void)parameter;
-
-    while (true)
-    {
-        uint16_t x, y;
-
-        if (getTouchPoint(x, y))
-        {
-            if (btnPlay.contains(x, y))
-            {
-                drawPlayButton(true);
-                requestStartPlayback = true;
-                waitTouchRelease();
-                drawPlayButton(false);
-            }
-            else if (btnSend.contains(x, y))
-            {
-                drawSendButton(true);
-                requestSendAudio = true;
-                waitTouchRelease();
-                drawSendButton(false);
-            }
-            else
-            {
-                waitTouchRelease();
-            }
-        }
-
-        vTaskDelay(pdMS_TO_TICKS(20));
-    }
-}
-
-// ============================================================
 // Tasks
 // ============================================================
 static void udpRxTask(void *parameter)
@@ -905,19 +505,12 @@ static void udpRxTask(void *parameter)
 
     while (true)
     {
-        int packetSize = 0;
+        int packetSize = networkUdpParsePacket();
         int n = 0;
 
-        if (udpMutex != nullptr && xSemaphoreTake(udpMutex, pdMS_TO_TICKS(20)) == pdTRUE)
+        if (packetSize > 0)
         {
-            packetSize = udp.parsePacket();
-
-            if (packetSize > 0)
-            {
-                n = udp.read(rxBuf, sizeof(rxBuf));
-            }
-
-            xSemaphoreGive(udpMutex);
+            n = networkUdpRead(rxBuf, sizeof(rxBuf));
         }
 
         if (packetSize > 0 && n > 0)
@@ -970,9 +563,10 @@ static void playbackTask(void *parameter)
 
         if (seenEnd && buffered == 0 && expSeq >= eSeq)
         {
-            isStreaming = false;
+            isPlayingResponse = false;
+            awaitingResponse = false;
             streamFinished = true;
-            drawStatusText("Finished", "Tap PLAY to play again");
+            uiStartApplyState(UI_READY);
             continue;
         }
 
@@ -980,9 +574,10 @@ static void playbackTask(void *parameter)
         {
             if ((nowMs - lastPktMs) > END_TIMEOUT_MS)
             {
-                isStreaming = false;
+                isPlayingResponse = false;
+                awaitingResponse = false;
                 streamFinished = true;
-                drawStatusText("Timeout", "Tap PLAY to retry");
+                uiStartApplyState(UI_READY);
                 continue;
             }
         }
@@ -1015,7 +610,12 @@ static void playbackTask(void *parameter)
                                       (unsigned long)minSeq, buffered);
                     }
 
-                    drawStatusText("Playing", "Receiving audio...");
+                    if (!isPlayingResponse)
+                    {
+                        isPlayingResponse = true;
+                        awaitingResponse = false;
+                        uiStartApplyState(UI_SPEAKING);
+                    }
                 }
             }
             else
@@ -1059,6 +659,13 @@ static void playbackTask(void *parameter)
                 xSemaphoreGive(jitterMutex);
             }
             continue;
+        }
+
+        if (!isPlayingResponse)
+        {
+            isPlayingResponse = true;
+            awaitingResponse = false;
+            uiStartApplyState(UI_SPEAKING);
         }
 
         if (xSemaphoreTake(jitterMutex, portMAX_DELAY) == pdTRUE)
@@ -1117,7 +724,7 @@ static void statsTask(void *parameter)
         }
 
         Serial.printf(
-            "[STATS] rx=%lu dec=%lu fec=%lu plc=%lu miss=%lu drop=%lu dup=%lu late=%lu ahead=%lu malformed=%lu decErr=%lu hardRebuf=%lu buffered=%d expected=%lu highest=%lu end=%d rebuf=%d send=%d\n",
+            "[STATS] rx=%lu dec=%lu fec=%lu plc=%lu miss=%lu drop=%lu dup=%lu late=%lu ahead=%lu malformed=%lu decErr=%lu hardRebuf=%lu buffered=%d expected=%lu highest=%lu end=%d rebuf=%d mic=%d think=%d speak=%d\n",
             (unsigned long)receivedPackets,
             (unsigned long)decodedPackets,
             (unsigned long)fecRecoveredPackets,
@@ -1135,106 +742,40 @@ static void statsTask(void *parameter)
             (unsigned long)hiSeq,
             seenEnd ? 1 : 0,
             rebuf ? 1 : 0,
-            sendAudioEnabled ? 1 : 0);
+            micEnabled ? 1 : 0,
+            awaitingResponse ? 1 : 0,
+            isPlayingResponse ? 1 : 0);
 
         vTaskDelay(pdMS_TO_TICKS(STATS_PERIOD_MS));
     }
 }
 
 // ============================================================
-// Arduino
+// Public API
 // ============================================================
-void setup()
+bool audioDownlinkInit()
 {
-    Serial.begin(115200);
-    delay(800);
-
-    screenMutex = xSemaphoreCreateMutex();
     jitterMutex = xSemaphoreCreateMutex();
-    udpMutex = xSemaphoreCreateMutex();
-
-    initDisplayHardware();
-    initTouchHardware();
-    drawUI();
-
-    drawStatusText("Connecting WiFi", "Please wait...");
-
-    WiFi.mode(WIFI_STA);
-    WiFi.begin(WIFI_SSID, WIFI_PASS);
-
-    while (WiFi.status() != WL_CONNECTED)
+    if (jitterMutex == nullptr)
     {
-        delay(300);
-        Serial.print(".");
-    }
-
-    WiFi.setSleep(false);
-    wifiReady = true;
-
-    Serial.println();
-    Serial.print("[WIFI] IP: ");
-    Serial.println(WiFi.localIP());
-
-    if (!udp.begin(LOCAL_UDP_PORT))
-    {
-        drawStatusText("UDP failed", "udp.begin() error");
-        while (true)
-            delay(1000);
+        Serial.println("[DOWNLINK] Failed to create jitterMutex");
+        return false;
     }
 
     if (!i2sInit())
-    {
-        drawStatusText("I2S failed", "Check DAC pins");
-        while (true)
-            delay(1000);
-    }
+        return false;
 
     if (!opusInit())
-    {
-        drawStatusText("Opus failed", "decoder create error");
-        while (true)
-            delay(1000);
-    }
+        return false;
 
-    if (!initI2SMic())
-    {
-        drawStatusText("MIC failed", "Check mic pins");
-        while (true)
-            delay(1000);
-    }
-
-    resetStreamState();
+    audioDownlinkResetStreamState();
     streamFinished = true;
-    drawStatusText("Ready", "PLAY=opus down | SEND=pcm up");
-
-    xTaskCreatePinnedToCore(udpRxTask, "udpRxTask", 3072, nullptr, 3, nullptr, 1);
-    xTaskCreatePinnedToCore(playbackTask, "playbackTask", 8192, nullptr, 2, nullptr, 1);
-    xTaskCreatePinnedToCore(taskTouch, "taskTouch", 3072, nullptr, 1, nullptr, 1);
-    xTaskCreatePinnedToCore(statsTask, "statsTask", 2048, nullptr, 1, nullptr, 1);
-    xTaskCreatePinnedToCore(micCaptureTask, "micCaptureTask", 8192, nullptr, 2, nullptr, 1);
+    return true;
 }
 
-void loop()
+void audioDownlinkStartTasks()
 {
-    if (wifiReady && requestStartPlayback)
-    {
-        requestStartPlayback = false;
-        drawStatusText("Requesting", "Sending START to server...");
-        sendStart();
-    }
-
-    if (requestSendAudio)
-    {
-        requestSendAudio = false;
-        sendAudioEnabled = !sendAudioEnabled;
-
-        if (sendAudioEnabled)
-            drawStatusText("SEND ON", "Capturing PCM + UDP");
-        else
-            drawStatusText("SEND OFF", "Stopping uplink...");
-
-        drawSendButton(false);
-    }
-
-    delay(20);
+    xTaskCreatePinnedToCore(udpRxTask, "udpRxTask", 3072, nullptr, 3, nullptr, 1);
+    xTaskCreatePinnedToCore(playbackTask, "playbackTask", 8192, nullptr, 2, nullptr, 1);
+    xTaskCreatePinnedToCore(statsTask, "statsTask", 2048, nullptr, 1, nullptr, 1);
 }
