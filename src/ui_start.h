@@ -2,17 +2,24 @@
 
 #include <Arduino.h>
 
-enum UiState : uint8_t
+enum UiState
 {
-    UI_READY = 0,
+    UI_READY,
     UI_LISTENING,
     UI_THINKING,
     UI_SPEAKING,
-    UI_ERROR,
+    UI_ERROR
+};
+
+enum UiStartAction
+{
+    UI_ACTION_NONE,
+    UI_ACTION_MIC,
+    UI_ACTION_SETUP
 };
 
 void uiStartInit();
 void uiStartDrawBase();
 void uiStartApplyState(UiState state);
-bool uiStartHandleTouch(uint16_t x, uint16_t y);
+UiStartAction uiStartHandleTouch(uint16_t x, uint16_t y);
 UiState uiStartGetState();

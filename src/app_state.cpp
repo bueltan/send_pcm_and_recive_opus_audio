@@ -11,7 +11,7 @@ volatile AppScreen currentScreen = SCREEN_START;
 
 // ====================== NETWORK STATUS ======================
 volatile Status wifiStatus = DISCONNECTED;
-volatile Status udpStatus  = DISCONNECTED;
+volatile Status udpStatus = DISCONNECTED;
 volatile bool micStreaming = false;
 
 // ====================== CONFIG VALUES ======================
@@ -26,6 +26,7 @@ bool udpSocketStarted = false;
 
 // ====================== SHARED RTOS OBJECTS ======================
 SemaphoreHandle_t screenMutex = NULL;
+SemaphoreHandle_t udpMutex = NULL;
 
 // ====================== CONFIG SCREEN STATE ======================
 String inputText = "";
@@ -40,3 +41,12 @@ uint16_t t_y = 0;
 
 // ====================== AUDIO ======================
 uint32_t sequence = 0;
+
+// ====================== WIFI SETUP ======================
+
+
+int wifiNetworkCount = 0;
+String wifiNetworkNames[MAX_WIFI_NETWORKS];
+int wifiNetworkRSSI[MAX_WIFI_NETWORKS];
+bool wifiScanInProgress = false;
+int selectedWifiIndex = -1;

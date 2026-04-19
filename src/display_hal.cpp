@@ -8,10 +8,11 @@ static XPT2046_Bitbang ts(XPT2046_MOSI, XPT2046_MISO, XPT2046_CLK, XPT2046_CS);
 static TFT_eSPI tft;
 
 // ====================== TOUCH CALIBRATION ======================
-static int TOUCH_MIN_X = 25;
-static int TOUCH_MAX_X = 222;
-static int TOUCH_MIN_Y = 31;
-static int TOUCH_MAX_Y = 281;
+static int TOUCH_MIN_X = 16;
+static int TOUCH_MAX_X = 224;
+static int TOUCH_MIN_Y = 14;
+static int TOUCH_MAX_Y = 297;
+
 
 static bool swapXY  = true;
 static bool invertX = true;

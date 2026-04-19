@@ -7,6 +7,31 @@
 static TFT_eSPI_Button btnMic;
 static volatile UiState uiState = UI_READY;
 
+// Setup button bounds
+static constexpr int SETUP_X = 188;
+static constexpr int SETUP_Y = 14;
+static constexpr int SETUP_W = 36;
+static constexpr int SETUP_H = 36;
+
+// Simple 16x16 monochrome setup icon
+static const uint8_t setupIcon16x16[] = {
+    0b00000111, 0b11100000,
+    0b00001100, 0b00110000,
+    0b00011000, 0b00011000,
+    0b00110011, 0b11001100,
+    0b00100111, 0b11100100,
+    0b01100110, 0b01100110,
+    0b01101100, 0b00110110,
+    0b11111100, 0b00111111,
+    0b11111100, 0b00111111,
+    0b01101100, 0b00110110,
+    0b01100110, 0b01100110,
+    0b00100111, 0b11100100,
+    0b00110011, 0b11001100,
+    0b00011000, 0b00011000,
+    0b00001100, 0b00110000,
+    0b00000111, 0b11100000};
+
 static const char *uiStateToButtonLabel(UiState state)
 {
     switch (state)
@@ -23,6 +48,18 @@ static const char *uiStateToButtonLabel(UiState state)
     default:
         return "MIC";
     }
+}
+
+static void drawTitle()
+{
+    TFT_eSPI &tft = display();
+
+    screenLock();
+    tft.setTextColor(TFT_GREEN, TFT_BLACK);
+    tft.setTextSize(2);
+    tft.setCursor(22, 22);
+    tft.print("HAND-WALL-E");
+    screenUnlock();
 }
 
 static void drawStatusText(const char *line1, const char *line2 = nullptr)
@@ -63,6 +100,29 @@ static void drawMicButton(bool inverted = false)
     screenUnlock();
 }
 
+static void drawSetupButton(bool pressed = false)
+{
+    TFT_eSPI &tft = display();
+
+    const uint16_t bg = pressed ? TFT_GREEN : TFT_BLACK;
+    const uint16_t fg = pressed ? TFT_BLACK : TFT_GREEN;
+
+    screenLock();
+    tft.fillRoundRect(SETUP_X, SETUP_Y, SETUP_W, SETUP_H, 4, bg);
+    tft.drawRoundRect(SETUP_X, SETUP_Y, SETUP_W, SETUP_H, 4, TFT_GREEN);
+
+    const int iconX = SETUP_X + (SETUP_W - 16) / 2;
+    const int iconY = SETUP_Y + (SETUP_H - 16) / 2;
+    tft.drawBitmap(iconX, iconY, setupIcon16x16, 16, 16, fg);
+    screenUnlock();
+}
+
+static bool isSetupTouched(uint16_t x, uint16_t y)
+{
+    return x >= SETUP_X && x < (SETUP_X + SETUP_W) &&
+           y >= SETUP_Y && y < (SETUP_Y + SETUP_H);
+}
+
 void uiStartInit()
 {
     uiState = UI_READY;
@@ -74,13 +134,16 @@ void uiStartDrawBase()
 
     screenLock();
     tft.fillScreen(TFT_BLACK);
-    tft.setTextColor(TFT_GREEN, TFT_BLACK);
-    tft.setTextSize(2);
-    tft.setCursor(28, 20);
-    tft.print("WALL-E VOICE");
     screenUnlock();
 
-    uiStartApplyState(UI_READY);
+    drawTitle();
+    drawSetupButton(false);
+
+    // Importante: como uiState ya arranca en UI_READY,
+    // llamamos primero a drawStatusText y drawMicButton
+    // para evitar que uiStartApplyState(UI_READY) salga por early return.
+    drawStatusText("Ready", "Tap MIC to talk");
+    drawMicButton(false);
 }
 
 void uiStartApplyState(UiState state)
@@ -102,7 +165,7 @@ void uiStartApplyState(UiState state)
         drawStatusText("Thinking", "Waiting response...");
         break;
     case UI_SPEAKING:
-        drawStatusText("Speaking", "Receiving Opus audio...");
+        drawStatusText("Speaking", "Receiving audio...");
         break;
     case UI_ERROR:
     default:
@@ -111,19 +174,28 @@ void uiStartApplyState(UiState state)
     }
 
     drawMicButton(false);
+    drawSetupButton(false);
 }
 
-bool uiStartHandleTouch(uint16_t x, uint16_t y)
+UiStartAction uiStartHandleTouch(uint16_t x, uint16_t y)
 {
+    if (isSetupTouched(x, y))
+    {
+        drawSetupButton(true);
+        waitTouchRelease();
+        drawSetupButton(false);
+        return UI_ACTION_SETUP;
+    }
+
     if (btnMic.contains(x, y))
     {
         drawMicButton(true);
         waitTouchRelease();
         drawMicButton(false);
-        return true;
+        return UI_ACTION_MIC;
     }
 
-    return false;
+    return UI_ACTION_NONE;
 }
 
 UiState uiStartGetState()
