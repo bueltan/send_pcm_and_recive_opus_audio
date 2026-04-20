@@ -5,7 +5,7 @@
 #include "display_hal.h"
 #include "app_runtime_state.h"
 #include "app_state.h"
-
+#include <WiFi.h>
 static TFT_eSPI_Button btnMic;
 static volatile UiState uiState = UI_READY;
 
@@ -81,17 +81,38 @@ static void drawWifiStatus()
         dotColor = TFT_ORANGE;
     }
 
+    String shownSSID;
+
+    if (wifiStatus != DISCONNECTED && WiFi.status() == WL_CONNECTED)
+    {
+        shownSSID = WiFi.SSID();
+    }
+    else if (wifiSSID.length() > 0)
+    {
+        shownSSID = wifiSSID;
+    }
+    else
+    {
+        shownSSID = "<none>";
+    }
+
+    if (shownSSID.length() > 10)
+    {
+        shownSSID = shownSSID.substring(0, 10) + "...";
+    }
+
+    String label = "WiFi: " + shownSSID;
+
     static constexpr int WIFI_BOX_X = 6;
     static constexpr int WIFI_BOX_Y = 6;
-    static constexpr int WIFI_BOX_W = 54;
-    static constexpr int WIFI_BOX_H = 14;
+    static constexpr int WIFI_BOX_W = 130;
+    static constexpr int WIFI_BOX_H = 16;
 
     static constexpr int WIFI_TEXT_X = 8;
     static constexpr int WIFI_TEXT_Y = 10;
-
-    static constexpr int WIFI_DOT_X = 46;
-    static constexpr int WIFI_DOT_Y = 13;
     static constexpr int WIFI_DOT_R = 4;
+    static constexpr int WIFI_DOT_GAP = 8;
+
     screenLock();
 
     tft.fillRect(WIFI_BOX_X, WIFI_BOX_Y, WIFI_BOX_W, WIFI_BOX_H, TFT_BLACK);
@@ -99,10 +120,20 @@ static void drawWifiStatus()
     tft.setTextColor(TFT_GREEN, TFT_BLACK);
     tft.setTextSize(1);
     tft.setCursor(WIFI_TEXT_X, WIFI_TEXT_Y);
-    tft.print("WIFI");
+    tft.print(label);
 
-    tft.fillCircle(WIFI_DOT_X, WIFI_DOT_Y, WIFI_DOT_R, dotColor);
-    tft.drawCircle(WIFI_DOT_X, WIFI_DOT_Y, WIFI_DOT_R, TFT_GREEN);
+    int textWidth = tft.textWidth(label);
+    int dotX = WIFI_TEXT_X + textWidth + WIFI_DOT_GAP;
+    int dotY = WIFI_BOX_Y + WIFI_BOX_H / 2;
+
+    int maxDotX = WIFI_BOX_X + WIFI_BOX_W - WIFI_DOT_R - 1;
+    if (dotX > maxDotX)
+    {
+        dotX = maxDotX;
+    }
+
+    tft.fillCircle(dotX, dotY, WIFI_DOT_R, dotColor);
+    tft.drawCircle(dotX, dotY, WIFI_DOT_R, TFT_GREEN);
 
     screenUnlock();
 }

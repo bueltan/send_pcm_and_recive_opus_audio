@@ -302,20 +302,31 @@ void loop()
     }
 
     int selectedIndex = -1;
-    if (takeWifiSelectRequest(selectedIndex))
+if (takeWifiSelectRequest(selectedIndex))
+{
+    if (selectedIndex >= 0 && selectedIndex < wifiNetworkCount)
     {
-        if (selectedIndex >= 0 && selectedIndex < wifiNetworkCount)
+        selectedWifiIndex = selectedIndex;
+        wifiSSID = wifiNetworkNames[selectedIndex];
+
+        String savedPass;
+        if (storagePrefsLoadWifiPasswordForSsid(wifiSSID, savedPass))
         {
-            selectedWifiIndex = selectedIndex;
-            wifiSSID = wifiNetworkNames[selectedIndex];
-            wifiPASS = "";
-
-            Serial.print("[WIFI] Selected network: ");
-            Serial.println(wifiSSID);
-
-            showWifiPasswordScreen();
+            wifiPASS = savedPass;
+            Serial.println("[WIFI] Loaded saved password for selected SSID");
         }
+        else
+        {
+            wifiPASS = "";
+            Serial.println("[WIFI] No saved password for selected SSID");
+        }
+
+        Serial.print("[WIFI] Selected network: ");
+        Serial.println(wifiSSID);
+
+        showWifiPasswordScreen();
     }
+}
 
     if (takeWifiPasswordBackRequest())
     {
@@ -331,6 +342,7 @@ void loop()
 
         if (ok)
         {
+            storagePrefsSaveWifiCredential(wifiSSID, wifiPASS);
             storagePrefsSave();
 
             if (!appStatusStartNetworkServicesIfNeeded())

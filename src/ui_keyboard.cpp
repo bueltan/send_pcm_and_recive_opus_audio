@@ -213,12 +213,25 @@ static void drawKeyLabel(int index, const String &label, bool inverted)
     screenUnlock();
 }
 
-static void drawOneKey(int index, bool inverted)
+static void drawOneKey(int index, bool pressed)
 {
     if (!gKeyboardState)
         return;
 
     const String label = getKeyLabel(index);
+
+    bool selected = false;
+
+    if (index == CAPS_INDEX)
+    {
+        selected = gKeyboardState->capsLock;
+    }
+    else if (index == MODE_INDEX)
+    {
+        selected = gKeyboardState->symbolMode;
+    }
+
+    const bool inverted = pressed || selected;
 
     screenLock();
     gKeyButtons[index].drawButton(inverted);
