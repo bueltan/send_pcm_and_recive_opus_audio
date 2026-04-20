@@ -10,6 +10,8 @@
 #include "ui_start.h"
 #include "ui_wifi.h"
 #include "ui_wifi_password.h"
+#include "ui_server.h"
+#include "ui_server_edit.h"
 
 static volatile bool toggleMicRequested = false;
 static volatile bool openSetupRequested = false;
@@ -26,6 +28,19 @@ static volatile int wifiSelectedIndexRequested = -1;
 
 static volatile bool wifiPasswordBackRequested = false;
 static volatile bool wifiPasswordOkRequested = false;
+
+// SERVER screen requests
+static volatile bool serverAddRequested = false;
+static volatile bool serverEditRequested = false;
+static volatile bool serverBackRequested = false;
+static volatile bool serverOkRequested = false;
+static volatile bool serverSelectRequested = false;
+static volatile int serverSelectedIndexRequested = -1;
+
+// SERVER EDIT screen requests
+static volatile bool serverEditBackRequested = false;
+static volatile bool serverEditOkRequested = false;
+static volatile bool serverDeleteRequested = false;
 
 static void handleStartScreenTouch(uint16_t x, uint16_t y)
 {
@@ -109,6 +124,56 @@ static void handleWifiPasswordScreenTouch(uint16_t x, uint16_t y)
     }
 }
 
+static void handleServerScreenTouch(uint16_t x, uint16_t y)
+{
+    int selectedIndex = -1;
+    UiServerAction action = uiServerHandleTouch(x, y, selectedIndex);
+
+    if (action == UI_SERVER_ACTION_ADD)
+    {
+        serverAddRequested = true;
+    }
+    else if (action == UI_SERVER_ACTION_EDIT)
+    {
+        serverEditRequested = true;
+    }
+    else if (action == UI_SERVER_ACTION_BACK)
+    {
+        serverBackRequested = true;
+    }
+    else if (action == UI_SERVER_ACTION_OK)
+    {
+        serverOkRequested = true;
+    }
+    else if (action == UI_SERVER_ACTION_SELECT)
+    {
+        serverSelectedIndexRequested = selectedIndex;
+        serverSelectRequested = true;
+    }
+    else if (action == UI_SERVER_ACTION_DELETE)
+    {
+        serverDeleteRequested = true;
+    }
+    else
+    {
+        waitTouchRelease();
+    }
+}
+
+static void handleServerEditScreenTouch(uint16_t x, uint16_t y)
+{
+    UiServerEditAction action = uiServerEditHandleTouch(x, y);
+
+    if (action == UI_SERVER_EDIT_ACTION_BACK)
+    {
+        serverEditBackRequested = true;
+    }
+    else if (action == UI_SERVER_EDIT_ACTION_OK)
+    {
+        serverEditOkRequested = true;
+    }
+}
+
 static void taskTouch(void *parameter)
 {
     (void)parameter;
@@ -134,6 +199,14 @@ static void taskTouch(void *parameter)
             else if (currentScreen == SCREEN_WIFI_PASSWORD)
             {
                 handleWifiPasswordScreenTouch(x, y);
+            }
+            else if (currentScreen == SCREEN_SERVER)
+            {
+                handleServerScreenTouch(x, y);
+            }
+            else if (currentScreen == SCREEN_SERVER_EDIT)
+            {
+                handleServerEditScreenTouch(x, y);
             }
             else
             {
@@ -248,5 +321,79 @@ bool takeWifiPasswordOkRequest()
         return false;
 
     wifiPasswordOkRequested = false;
+    return true;
+}
+
+bool takeServerAddRequest()
+{
+    if (!serverAddRequested)
+        return false;
+
+    serverAddRequested = false;
+    return true;
+}
+
+bool takeServerEditRequest()
+{
+    if (!serverEditRequested)
+        return false;
+
+    serverEditRequested = false;
+    return true;
+}
+
+bool takeServerBackRequest()
+{
+    if (!serverBackRequested)
+        return false;
+
+    serverBackRequested = false;
+    return true;
+}
+
+bool takeServerOkRequest()
+{
+    if (!serverOkRequested)
+        return false;
+
+    serverOkRequested = false;
+    return true;
+}
+
+bool takeServerSelectRequest(int &index)
+{
+    if (!serverSelectRequested)
+        return false;
+
+    index = serverSelectedIndexRequested;
+    serverSelectRequested = false;
+    serverSelectedIndexRequested = -1;
+    return true;
+}
+
+bool takeServerEditBackRequest()
+{
+    if (!serverEditBackRequested)
+        return false;
+
+    serverEditBackRequested = false;
+    return true;
+}
+
+bool takeServerEditOkRequest()
+{
+    if (!serverEditOkRequested)
+        return false;
+
+    serverEditOkRequested = false;
+    return true;
+}
+
+bool takeServerDeleteRequest()
+{
+    if (!serverDeleteRequested)
+        return false;
+
+    serverDeleteRequested = false;
     return true;
 }

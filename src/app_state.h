@@ -18,6 +18,8 @@ enum AppScreen
     SCREEN_SETUP,
     SCREEN_WIFI,
     SCREEN_WIFI_PASSWORD,
+    SCREEN_SERVER,
+    SCREEN_SERVER_EDIT,
 };
 
 extern volatile AppScreen currentScreen;
@@ -87,3 +89,9 @@ extern int selectedWifiIndex;
 
 extern String lastErrorLine1;
 extern String lastErrorLine2;
+
+constexpr int MAX_SERVER_ENTRIES = 8;
+
+extern int serverListCount;
+extern String serverList[MAX_SERVER_ENTRIES];
+extern int selectedServerIndex;

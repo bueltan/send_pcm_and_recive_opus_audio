@@ -10,6 +10,14 @@ static Preferences prefs;
 
 static constexpr int MAX_SAVED_WIFI_NETWORKS = 8;
 
+
+static constexpr int MAX_SAVED_SERVERS = MAX_SERVER_ENTRIES;
+
+static String makeServerKey(int index)
+{
+    return "server_" + String(index);
+}
+
 static String makeSsidKey(int index)
 {
     return "ssid_" + String(index);
@@ -18,6 +26,199 @@ static String makeSsidKey(int index)
 static String makePassKey(int index)
 {
     return "pass_" + String(index);
+}
+
+
+bool storagePrefsRemoveServer(const String &ip)
+{
+    if (ip.length() == 0)
+    {
+        return false;
+    }
+
+    int idx = -1;
+    for (int i = 0; i < serverListCount; i++)
+    {
+        if (serverList[i] == ip)
+        {
+            idx = i;
+            break;
+        }
+    }
+
+    if (idx < 0)
+    {
+        return false;
+    }
+
+    for (int i = idx; i < serverListCount - 1; i++)
+    {
+        serverList[i] = serverList[i + 1];
+    }
+
+    if (serverListCount > 0)
+    {
+        serverListCount--;
+        serverList[serverListCount] = "";
+    }
+
+    // Never leave the list empty.
+    if (serverListCount == 0)
+    {
+        serverList[0] = SERVER_IP;
+        serverListCount = 1;
+        selectedServerIndex = 0;
+    }
+    else
+    {
+        if (selectedServerIndex >= serverListCount)
+        {
+            selectedServerIndex = serverListCount - 1;
+        }
+        if (selectedServerIndex < 0)
+        {
+            selectedServerIndex = 0;
+        }
+    }
+
+    // If active server was removed, fall back to selected/default.
+    bool activeStillExists = false;
+    for (int i = 0; i < serverListCount; i++)
+    {
+        if (serverList[i] == serverIP)
+        {
+            activeStillExists = true;
+            break;
+        }
+    }
+
+    if (!activeStillExists)
+    {
+        serverIP = serverList[selectedServerIndex];
+    }
+
+    return storagePrefsSaveServerList() && storagePrefsSave();
+}
+bool storagePrefsLoadServerList()
+{
+    serverListCount = 0;
+    selectedServerIndex = -1;
+
+    if (!prefs.begin("handwalle", false))
+    {
+        serverListCount = 1;
+        serverList[0] = SERVER_IP;
+        selectedServerIndex = 0;
+        return false;
+    }
+
+    int count = prefs.getInt("server_count", 0);
+    if (count > MAX_SAVED_SERVERS)
+        count = MAX_SAVED_SERVERS;
+
+    for (int i = 0; i < count; i++)
+    {
+        String value = prefs.getString(makeServerKey(i).c_str(), "");
+        if (value.length() > 0)
+        {
+            serverList[serverListCount++] = value;
+        }
+    }
+
+    bool hasDefault = false;
+    for (int i = 0; i < serverListCount; i++)
+    {
+        if (serverList[i] == SERVER_IP)
+        {
+            hasDefault = true;
+            break;
+        }
+    }
+
+    if (!hasDefault && serverListCount < MAX_SERVER_ENTRIES)
+    {
+        serverList[serverListCount++] = SERVER_IP;
+    }
+
+    if (serverListCount == 0)
+    {
+        serverList[0] = SERVER_IP;
+        serverListCount = 1;
+    }
+
+    selectedServerIndex = 0;
+    for (int i = 0; i < serverListCount; i++)
+    {
+        if (serverList[i] == serverIP)
+        {
+            selectedServerIndex = i;
+            break;
+        }
+    }
+
+    prefs.end();
+    return true;
+}
+
+bool storagePrefsSaveServerList()
+{
+    if (!prefs.begin("handwalle", false))
+    {
+        return false;
+    }
+
+    prefs.putInt("server_count", serverListCount);
+
+    for (int i = 0; i < MAX_SERVER_ENTRIES; i++)
+    {
+        String key = makeServerKey(i);
+
+        if (i < serverListCount)
+        {
+            prefs.putString(key.c_str(), serverList[i]);
+        }
+        else
+        {
+            prefs.remove(key.c_str());
+        }
+    }
+
+    prefs.end();
+    return true;
+}
+
+bool storagePrefsAddServer(const String &ip)
+{
+    if (ip.length() == 0)
+    {
+        return false;
+    }
+
+    if (serverListCount <= 0)
+    {
+        serverList[0] = SERVER_IP;
+        serverListCount = 1;
+    }
+
+    for (int i = 0; i < serverListCount; i++)
+    {
+        if (serverList[i] == ip)
+        {
+            selectedServerIndex = i;
+            return true;
+        }
+    }
+
+    if (serverListCount >= MAX_SERVER_ENTRIES)
+    {
+        return false;
+    }
+
+    serverList[serverListCount] = ip;
+    selectedServerIndex = serverListCount;
+    serverListCount++;
+
+    return storagePrefsSaveServerList();
 }
 
 static int findWifiIndexBySsidNoOpen(const String &ssid)

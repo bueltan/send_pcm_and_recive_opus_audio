@@ -16,3 +16,14 @@ bool takeWifiSelectRequest(int &index);
 
 bool takeWifiPasswordBackRequest();
 bool takeWifiPasswordOkRequest();
+
+bool takeServerAddRequest();
+bool takeServerBackRequest();
+bool takeServerOkRequest();
+bool takeServerSelectRequest(int &index);
+
+bool takeServerEditRequest();
+
+bool takeServerEditBackRequest();
+bool takeServerEditOkRequest();
+bool takeServerDeleteRequest();

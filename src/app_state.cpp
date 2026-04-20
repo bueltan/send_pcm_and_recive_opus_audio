@@ -53,3 +53,8 @@ int selectedWifiIndex = -1;
 
 String lastErrorLine1 = "Error";
 String lastErrorLine2 = "Unknown error";
+
+
+int serverListCount = 0;
+String serverList[MAX_SERVER_ENTRIES];
+int selectedServerIndex = -1;

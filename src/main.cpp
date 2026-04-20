@@ -16,12 +16,30 @@
 #include "ui_setup.h"
 #include "ui_wifi.h"
 #include "ui_wifi_password.h"
+#include "ui_server.h"
+#include "ui_server_edit.h"
 
 // ============================================================
 // Timing
 // ============================================================
 static unsigned long lastConnectivityRefreshMs = 0;
 static constexpr unsigned long CONNECTIVITY_REFRESH_MS = 1000;
+
+// ============================================================
+// UI navigation
+// ============================================================
+static void showServerScreen()
+{
+    currentScreen = SCREEN_SERVER;
+    uiServerDrawBase();
+}
+
+static void showServerEditScreen()
+{
+    currentScreen = SCREEN_SERVER_EDIT;
+    uiServerEditInit();
+    uiServerEditDrawBase();
+}
 
 // ============================================================
 // Fatal UI error
@@ -128,10 +146,8 @@ static void runWifiScanBlocking()
         uiWifiDrawBase();
     }
 
-    // Scan may drop WiFi, so refresh the real state first.
     appStatusRefreshConnectivity();
 
-    // If the device was connected before the scan, try to restore it automatically.
     if (wasConnectedBeforeScan && previousSSID.length() > 0)
     {
         Serial.println("[WIFI] Restoring previous WiFi after scan...");
@@ -158,6 +174,7 @@ static void runWifiScanBlocking()
         appStatusRefreshStartScreen();
     }
 }
+
 // ============================================================
 // Runtime actions
 // ============================================================
@@ -233,8 +250,11 @@ void setup()
     uiSetupInit();
     uiWifiInit();
     uiWifiPasswordInit();
+    uiServerInit();
+    uiServerEditInit();
 
     storagePrefsLoad();
+    storagePrefsLoadServerList();
 
     if (serverIP.length() == 0)
     {
@@ -282,7 +302,7 @@ void loop()
 
     if (takeSetupServerRequest())
     {
-        Serial.println("Setup: SERVER");
+        showServerScreen();
     }
 
     if (takeSetupTouchRequest())
@@ -290,6 +310,7 @@ void loop()
         Serial.println("Setup: TOUCH");
     }
 
+    // WIFI
     if (takeWifiBackRequest())
     {
         showSetupScreen();
@@ -302,31 +323,31 @@ void loop()
     }
 
     int selectedIndex = -1;
-if (takeWifiSelectRequest(selectedIndex))
-{
-    if (selectedIndex >= 0 && selectedIndex < wifiNetworkCount)
+    if (takeWifiSelectRequest(selectedIndex))
     {
-        selectedWifiIndex = selectedIndex;
-        wifiSSID = wifiNetworkNames[selectedIndex];
-
-        String savedPass;
-        if (storagePrefsLoadWifiPasswordForSsid(wifiSSID, savedPass))
+        if (selectedIndex >= 0 && selectedIndex < wifiNetworkCount)
         {
-            wifiPASS = savedPass;
-            Serial.println("[WIFI] Loaded saved password for selected SSID");
-        }
-        else
-        {
-            wifiPASS = "";
-            Serial.println("[WIFI] No saved password for selected SSID");
-        }
+            selectedWifiIndex = selectedIndex;
+            wifiSSID = wifiNetworkNames[selectedIndex];
 
-        Serial.print("[WIFI] Selected network: ");
-        Serial.println(wifiSSID);
+            String savedPass;
+            if (storagePrefsLoadWifiPasswordForSsid(wifiSSID, savedPass))
+            {
+                wifiPASS = savedPass;
+                Serial.println("[WIFI] Loaded saved password for selected SSID");
+            }
+            else
+            {
+                wifiPASS = "";
+                Serial.println("[WIFI] No saved password for selected SSID");
+            }
 
-        showWifiPasswordScreen();
+            Serial.print("[WIFI] Selected network: ");
+            Serial.println(wifiSSID);
+
+            showWifiPasswordScreen();
+        }
     }
-}
 
     if (takeWifiPasswordBackRequest())
     {
@@ -363,6 +384,81 @@ if (takeWifiSelectRequest(selectedIndex))
         showStartScreen();
     }
 
+    // SERVER
+    selectedIndex = -1;
+    if (takeServerSelectRequest(selectedIndex))
+    {
+        if (selectedIndex >= 0 && selectedIndex < serverListCount)
+        {
+            selectedServerIndex = selectedIndex;
+            uiServerRedrawList();
+
+            Serial.print("[SERVER] Selected: ");
+            Serial.println(serverList[selectedServerIndex]);
+        }
+    }
+
+    if (takeServerBackRequest())
+    {
+        showSetupScreen();
+    }
+
+    if (takeServerOkRequest())
+    {
+        if (selectedServerIndex >= 0 && selectedServerIndex < serverListCount)
+        {
+            serverIP = serverList[selectedServerIndex];
+            storagePrefsSave();
+
+            Serial.print("[SERVER] Active server: ");
+            Serial.println(serverIP);
+        }
+
+        showStartScreen();
+    }
+
+    if (takeServerAddRequest())
+    {
+        serverIP = "";
+        showServerEditScreen();
+    }
+
+    if (takeServerEditRequest())
+    {
+        if (selectedServerIndex >= 0 && selectedServerIndex < serverListCount)
+        {
+            serverIP = serverList[selectedServerIndex];
+            showServerEditScreen();
+        }
+    }
+
+    if (takeServerEditBackRequest())
+    {
+        showServerScreen();
+    }
+
+    if (takeServerEditOkRequest())
+    {
+        if (serverIP.length() > 0)
+        {
+            if (storagePrefsAddServer(serverIP))
+            {
+                storagePrefsLoadServerList();
+                uiServerDrawBase();
+
+                Serial.print("[SERVER] Saved server: ");
+                Serial.println(serverIP);
+            }
+            else
+            {
+                Serial.println("[SERVER] Failed to save server");
+            }
+        }
+
+        showServerScreen();
+    }
+
+    // START / AUDIO
     if (takeToggleMicRequest() && currentScreen == SCREEN_START)
     {
         handleMicToggle();
@@ -381,13 +477,31 @@ if (takeWifiSelectRequest(selectedIndex))
         appStatusRefreshConnectivity();
     }
 
-    // Centralized UI refresh:
-    // all background tasks only update shared state,
-    // and the main loop is the only place that redraws START.
     if (currentScreen == SCREEN_START)
     {
         appStatusRefreshStartScreen();
     }
+
+    if (takeServerDeleteRequest())
+{
+    if (selectedServerIndex >= 0 && selectedServerIndex < serverListCount)
+    {
+        String removedServer = serverList[selectedServerIndex];
+
+        if (storagePrefsRemoveServer(removedServer))
+        {
+            storagePrefsLoadServerList();
+            uiServerDrawBase();
+
+            Serial.print("[SERVER] Removed server: ");
+            Serial.println(removedServer);
+        }
+        else
+        {
+            Serial.println("[SERVER] Failed to remove server");
+        }
+    }
+}
 
     delay(20);
 }

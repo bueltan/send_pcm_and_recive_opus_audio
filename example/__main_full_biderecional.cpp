@@ -8,6 +8,7 @@
 #include "pins.h"
 #include "display_hal.h"
 #include "app_state.h"
+#include "touch_input.h"
 
 // ============================================================
 // WiFi / UDP
@@ -890,6 +891,10 @@ static void taskTouch(void *parameter)
                 waitTouchRelease();
             }
         }
+        else if (currentScreen == SCREEN_SERVER_EDIT)
+        {
+            handleServerEditScreenTouch(x, y);
+        }
 
         vTaskDelay(pdMS_TO_TICKS(20));
     }
@@ -1237,4 +1242,31 @@ void loop()
     }
 
     delay(20);
+}
+
+bool takeServerEditRequest()
+{
+    if (!serverEditRequested)
+        return false;
+
+    serverEditRequested = false;
+    return true;
+}
+
+bool takeServerEditBackRequest()
+{
+    if (!serverEditBackRequested)
+        return false;
+
+    serverEditBackRequested = false;
+    return true;
+}
+
+bool takeServerEditOkRequest()
+{
+    if (!serverEditOkRequested)
+        return false;
+
+    serverEditOkRequested = false;
+    return true;
 }
