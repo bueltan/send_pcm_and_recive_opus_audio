@@ -86,6 +86,10 @@ static void clearWifiScanResults()
 
 static void runWifiScanBlocking()
 {
+    const bool wasConnectedBeforeScan = networkWifiIsConnected();
+    const String previousSSID = wifiSSID;
+    const String previousPASS = wifiPASS;
+
     wifiScanInProgress = true;
     clearWifiScanResults();
 
@@ -123,8 +127,37 @@ static void runWifiScanBlocking()
     {
         uiWifiDrawBase();
     }
-}
 
+    // Scan may drop WiFi, so refresh the real state first.
+    appStatusRefreshConnectivity();
+
+    // If the device was connected before the scan, try to restore it automatically.
+    if (wasConnectedBeforeScan && previousSSID.length() > 0)
+    {
+        Serial.println("[WIFI] Restoring previous WiFi after scan...");
+
+        wifiSSID = previousSSID;
+        wifiPASS = previousPASS;
+
+        const bool restored = networkWifiReconnect();
+
+        if (restored)
+        {
+            Serial.println("[WIFI] Previous WiFi restored");
+        }
+        else
+        {
+            Serial.println("[WIFI] Failed to restore previous WiFi");
+        }
+
+        appStatusRefreshConnectivity();
+    }
+
+    if (currentScreen == SCREEN_START)
+    {
+        appStatusRefreshStartScreen();
+    }
+}
 // ============================================================
 // Runtime actions
 // ============================================================
