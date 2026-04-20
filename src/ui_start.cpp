@@ -81,18 +81,17 @@ static void drawWifiStatus()
         dotColor = TFT_ORANGE;
     }
 
-    static constexpr int WIFI_BOX_X = 184;
-    static constexpr int WIFI_BOX_Y = 54;
-    static constexpr int WIFI_BOX_W = 48;
+    static constexpr int WIFI_BOX_X = 6;
+    static constexpr int WIFI_BOX_Y = 6;
+    static constexpr int WIFI_BOX_W = 54;
     static constexpr int WIFI_BOX_H = 14;
 
-    static constexpr int WIFI_TEXT_X = 186;
-    static constexpr int WIFI_TEXT_Y = 58;
+    static constexpr int WIFI_TEXT_X = 8;
+    static constexpr int WIFI_TEXT_Y = 10;
 
-    static constexpr int WIFI_DOT_X = 223;
-    static constexpr int WIFI_DOT_Y = 61;
+    static constexpr int WIFI_DOT_X = 46;
+    static constexpr int WIFI_DOT_Y = 13;
     static constexpr int WIFI_DOT_R = 4;
-
     screenLock();
 
     tft.fillRect(WIFI_BOX_X, WIFI_BOX_Y, WIFI_BOX_W, WIFI_BOX_H, TFT_BLACK);

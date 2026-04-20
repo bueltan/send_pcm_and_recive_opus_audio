@@ -9,7 +9,6 @@
 
 #include "pins.h"
 #include "network_udp.h"
-#include "ui_start.h"
 #include "app_runtime_state.h"
 #include "app_config.h"
 
@@ -536,7 +535,6 @@ static void playbackTask(void *parameter)
             isPlayingResponse = false;
             awaitingResponse = false;
             streamFinished = true;
-            uiStartApplyState(UI_READY);
             continue;
         }
 
@@ -547,7 +545,6 @@ static void playbackTask(void *parameter)
                 isPlayingResponse = false;
                 awaitingResponse = false;
                 streamFinished = true;
-                uiStartApplyState(UI_READY);
                 continue;
             }
         }
@@ -584,7 +581,6 @@ static void playbackTask(void *parameter)
                     {
                         isPlayingResponse = true;
                         awaitingResponse = false;
-                        uiStartApplyState(UI_SPEAKING);
                     }
                 }
             }
@@ -635,7 +631,6 @@ static void playbackTask(void *parameter)
         {
             isPlayingResponse = true;
             awaitingResponse = false;
-            uiStartApplyState(UI_SPEAKING);
         }
 
         if (xSemaphoreTake(jitterMutex, portMAX_DELAY) == pdTRUE)
